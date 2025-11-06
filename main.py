@@ -37,11 +37,55 @@ from hw.phase_encodings import phase_encoding
 from torchvision.utils import save_image
 
 from pprint import pprint
+from torch.utils.data import DataLoader
+from complex_dataset import (
+    ComplexFieldFocalStack,
+    save_complex_stack,
+    ComplexFramesToFocalStackTarget,   # <-- add this
+)
+
 
 #import wx
 #wx.DisableAsserts()
     
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
+
+def save_predicted_complex_fields(final_phase, z_list, wavelength, dx, dy, out_dir, channel=0):
+    import os, torch
+    os.makedirs(out_dir, exist_ok=True)
+
+    def asm_prop(u0, z):
+        H, W = u0.shape
+        device = u0.device
+        k = 2.0 * torch.pi / float(wavelength)
+        fx = torch.fft.fftfreq(W, d=float(dx)).to(device)
+        fy = torch.fft.fftfreq(H, d=float(dy)).to(device)
+        FX, FY = torch.meshgrid(fx, fy, indexing="xy")
+        FX, FY = FX.T, FY.T
+        omega2 = (2*torch.pi*FX)**2 + (2*torch.pi*FY)**2
+        pos = (k**2 - omega2).clamp(min=0).sqrt()
+        neg = (omega2 - k**2).clamp(min=0).sqrt()
+        H_z = torch.exp(1j * (float(z) * pos)) * torch.exp(-float(z) * neg)
+        return torch.fft.ifft2(torch.fft.fft2(u0) * H_z)
+
+    # final_phase: [T,H,W] or [H,W]
+    if final_phase.dim() == 2:
+        final_phase = final_phase.unsqueeze(0)
+    T, H, W = final_phase.shape
+
+    # Complex at SLM per frame
+    U0 = torch.exp(1j * final_phase)  # [T,H,W]
+    for t in range(T):
+        torch.save(U0[t].detach().cpu(),
+                   os.path.join(out_dir, f"U_pred_slm_ch{channel}_t{t:02d}.pt"))
+
+    # Propagate each frame to each z and save
+    for di, z in enumerate(z_list):
+        for t in range(T):
+            Uz = asm_prop(U0[t], z)
+            torch.save(Uz.detach().cpu(),
+                       os.path.join(out_dir, f"U_pred_ch{channel}_t{t:02d}_z{di:02d}_z{float(z):.6f}m.pt"))
+
 
 
 def main():
@@ -87,16 +131,39 @@ def main():
     algorithm = algs.load_alg(opt.method, mem_eff=opt.mem_eff)
 
     # Loader
-    if ',' in opt.data_path:
-        opt.data_path = opt.data_path.split(',')
-    img_loader = loaders.TargetLoader(shuffle=opt.random_gen,
-                                      vertical_flips=opt.random_gen,
-                                      horizontal_flips=opt.random_gen,
-                                      scale_vd_range=False, **opt)
-    
-    for i, target in enumerate(img_loader):
-        target_amp, target_mask, target_idx = target
-        target_amp = target_amp.to(dev).detach()
+    if opt.complex_input:
+        # Build a 96-frame (or opt.mi_T) target focal stack once.
+        # We'll cache it so multiple runs (T=1,12,24) re-use the same target.
+        cache_path = os.path.join(opt.out_dir, "target_amp_Tref{getattr(opt,'mi_T',96)}_D{len(opt.z_list)}.pt")
+        ds = ComplexFramesToFocalStackTarget(
+            T_ref=getattr(opt, "mi_T", 96),     # you can pass --mi_T=96
+            z_list=opt.z_list,
+            wavelength=opt.wavelength,
+            dx=opt.asm_dx, dy=opt.asm_dy,
+            device=dev,
+            cache_path=cache_path,
+            preview_dir=getattr(opt, "mi_dbg_dir", None)
+        )
+        img_loader = DataLoader(ds, batch_size=1, shuffle=False)
+    else:
+        if ',' in opt.data_path:
+            opt.data_path = opt.data_path.split(',')
+        img_loader = loaders.TargetLoader(shuffle=opt.random_gen,
+                                        vertical_flips=opt.random_gen,
+                                        horizontal_flips=opt.random_gen,
+                                        scale_vd_range=False, **opt)
+
+    for i, batch in enumerate(img_loader):
+        if opt.complex_input:
+            # batch is a dict from ComplexFieldFocalStack
+            target_amp = batch["target"].to(dev).detach()    # [D,H,W] amplitude
+            target_mask = None
+            target_idx = torch.tensor(0)                     # dummy index
+            # If you ever need Uz stacks here:
+            # U_stack = batch["U_complex"]  # [D,H,W] complex64 (on device already)
+        else:
+            target_amp, target_mask, target_idx = batch
+            target_amp = target_amp.to(dev).detach()
 
         if target_mask is not None:
             target_mask = target_mask.to(dev).detach()
@@ -135,6 +202,16 @@ def main():
         final_phase = results['final_phase']
         recon_amp = results['recon_amp']
         target_amp = results['target_amp']
+
+        if getattr(opt, 'save_complex', False) and getattr(opt, 'complex_input', False):
+            save_predicted_complex_fields(
+                final_phase=final_phase,
+                z_list=opt.z_list,
+                wavelength=opt.wavelength,
+                dx=opt.asm_dx, dy=opt.asm_dy,
+                out_dir=os.path.join(opt.out_dir, f"predicted_T{final_phase.shape[0]}"),
+                channel=opt.channel if opt.channel is not None else 0
+            )
 
         # encoding for SLM & save it out
         if opt.random_gen:

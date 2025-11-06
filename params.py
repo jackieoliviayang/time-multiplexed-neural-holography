@@ -137,6 +137,25 @@ def add_parameters(p, mode='train'):
     p.add_argument("--img_paths", type=str, nargs="+", default=None)
     p.add("--shutter_speed", type=float, nargs='+', default=100, help="Shutter speed of camera.")
     p.add("--num_data", type=int, default=100, help="Number of data to generate.")
+
+    # === Complex-field → focal-stack target (custom) ===
+    p.add_argument('--complex_input', type=str2bool, default=False,
+                   help='If True, load a complex field and generate a focal-stack target.')
+    p.add_argument('--complex_path', type=str, default=None,
+                   help='Path to complex field (.npy or .pt). For RGB, pass comma-separated list and select --channel.')
+    p.add_argument('--wavelength', type=float, default=532e-9,
+                   help='Wavelength in meters used for complex-field propagation.')
+    p.add_argument('--asm_dx', type=float, default=8e-6, help='Pixel pitch (m) in x for ASM.')
+    p.add_argument('--asm_dy', type=float, default=8e-6, help='Pixel pitch (m) in y for ASM.')
+    p.add_argument('--z_list_m', type=str, default='',
+                   help="Comma-separated depths in meters, e.g. '0.000,0.005,0.010'. If empty, use built-in plane list.")
+    p.add_argument('--save_complex', type=str2bool, default=True,
+                   help='Save U(x,y;z) per depth when using complex_input.')
+    p.add_argument('--complex_save_fmt', type=str, default='pt', choices=['pt','npy'],
+                   help='How to save complex fields (torch .pt or NumPy .npy).')
+    p.add_argument('--out_dir', type=str, default='outputs',
+                   help='Directory to save complex fields.')
+
     
     # Light field
     p.add_argument('--hop_len', type=int, default=0.0,
@@ -282,6 +301,31 @@ def set_configs(opt_p):
     opt.plane_idxs['validation'] = opt.training_plane_idxs
     opt.plane_idxs['test'] = opt.training_plane_idxs
     opt.plane_idxs['heldout'] = opt.heldout_plane_idxs
+
+    # === Resolve depth planes for complex_input path ===
+    # If user passes --z_list_m, parse that; otherwise use the repo’s existing plane list.
+    if getattr(opt, 'z_list_m', None):
+        ztxt = str(opt.z_list_m).strip()
+        if len(ztxt) > 0:
+            opt.z_list = [float(z) for z in ztxt.split(',') if z.strip() != '']
+        else:
+            opt.z_list = None
+    else:
+        opt.z_list = None
+
+    if opt.z_list is None:
+        # Use the same relative depth planes TMNH already computed.
+        # opt.prop_dists_from_wrp is a list of distances (meters) from the wavefront recording plane.
+        # This mirrors the 3D focal-stack setup the repo uses.
+        if opt.serial_two_prop_off:
+            # single plane case (prop_dist must be set)
+            opt.z_list = [0.0]
+        else:
+            opt.z_list = [float(p) for p in opt.prop_dists_from_wrp]
+
+    # ensure user wavelength is honored for complex_input
+    if getattr(opt, "complex_input", False) and hasattr(opt, "wavelength"):
+        opt.wavelength = float(opt.wavelength)
 
     return opt
 
