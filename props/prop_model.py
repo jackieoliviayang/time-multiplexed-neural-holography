@@ -35,15 +35,44 @@ from props.prop_zernike import compute_zernike_basis, combine_zernike_basis
 
 def model(opt, dev=torch.device('cuda'), preload_H=False):
     """ load model with opt.prop_model string """
+
+    ### ADDED
+    def _resolve_wavelength(opt):
+        # Prefer explicit CLI override
+        if getattr(opt, "wavelength", None) is not None:
+            return float(opt.wavelength)
+        # Fall back to per-channel list if present
+        if hasattr(opt, "wavelengths") and getattr(opt, "channel", None) is not None:
+            return float(opt.wavelengths[opt.channel])
+        # Final fallback
+        if hasattr(opt, "wavelengths"):
+            return float(opt.wavelengths[0])
+        return 5.32e-7  # sane default
+
     print(opt.prop_model.lower())
+
+    ## ADDED
+    # Ensure feature_size matches your CLI ASM pitch (Prop expects (dy, dx))
+    if hasattr(opt, "asm_dx") and hasattr(opt, "asm_dy"):
+        opt.feature_size = (float(opt.asm_dy), float(opt.asm_dx))
+
+    # Ensure we’re doing single-stage SLM->targets at your z_list
+    # (no WRP hop unless you want it)
+    if hasattr(opt, "z_list"):
+        opt.prop_dist = 0.0
+        opt.prop_dists_from_wrp = [float(z) for z in opt.z_list]
+
+    wl = _resolve_wavelength(opt)
+
+
     if opt.prop_model.lower() == 'asm':
-        sim_prop = prop_ideal.SerialProp(opt.prop_dist, opt.wavelength, opt.feature_size,
+        sim_prop = prop_ideal.SerialProp(opt.prop_dist, wl, opt.feature_size,
                                          'ASM', opt.F_aperture, opt.prop_dists_from_wrp,
                                          dim=1, opt=opt) # pass original opt
     elif opt.prop_model.lower() == 'nh':
         sim_prop = PropNH(prop_dist=opt.prop_dist,  # Parameterized wave propagation model
                           feature_size=opt.feature_size,
-                          wavelength=opt.wavelength,
+                          wavelength=wl,
                           slm_res=opt.slm_res,
                           roi_res=opt.roi_res,
                           F_aperture=opt.F_aperture,
@@ -54,7 +83,7 @@ def model(opt, dev=torch.device('cuda'), preload_H=False):
                           lut0=opt.lut0
                           ).to(dev)
     elif opt.prop_model.lower() in ('nh3d', 'propcnn', 'cnnprop', 'cnnpropcnn', 'hil', 'nh4d'):
-        sim_prop = CNNpropCNN(opt.prop_dist, opt.wavelength, opt.feature_size,
+        sim_prop = CNNpropCNN(opt.prop_dist, wl, opt.feature_size,
                               prop_type='ASM',
                               F_aperture=opt.F_aperture,
                               prop_dists_from_wrp=opt.prop_dists_from_wrp,
