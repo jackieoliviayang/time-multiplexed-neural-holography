@@ -19,7 +19,8 @@ $ python main.py --lr=0.01 --num_iters=10000 --num_frames=8 --quan_method=gumbel
 import os
 import json
 import torch
-import imageio
+# import imageio
+import imageio.v2 as imageio
 import configargparse
 from torch.utils.tensorboard import SummaryWriter
 from collections import defaultdict
@@ -44,47 +45,191 @@ from complex_dataset import (
     ComplexFramesToFocalStackTarget,   # <-- add this
 )
 
+import shutil, sys
+from pathlib import Path
 
 #import wx
 #wx.DisableAsserts()
     
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
-def save_predicted_complex_fields(final_phase, z_list, wavelength, dx, dy, out_dir, channel=0):
+## ADDED FOR SAVING
+def save_stack_video(stack, path, fps=12):
+    """stack: torch or np, shape [D,H,W] or [1,D,H,W]"""
+    if hasattr(stack, "detach"):
+        stack = stack.detach().float().cpu().numpy()
+    stack = np.squeeze(stack)  # -> [D,H,W] or [H,W]
+    if stack.ndim == 2:
+        stack = stack[None]     # make it [1,H,W]
+    # normalize per-frame for visibility; switch to global if you prefer
+    m = stack.max() + 1e-12
+    frames = [(stack[d] / m * 255).astype(np.uint8) for d in range(stack.shape[0])]
+    # write mp4; requires imageio-ffmpeg installed
+    writer = imageio.get_writer(path, fps=fps, codec="libx264", quality=8)
+    for f in frames:
+        writer.append_data(f)
+    writer.close()
+
+def _to8(x):
+    x = np.nan_to_num(x)
+    x = np.clip(x, 0, None)
+    m = float(x.max()) if x.size and np.isfinite(x.max()) and x.max() > 0 else 1.0
+    return (x / m * 255.0).round().astype(np.uint8)
+
+## ADDED FOR SAVING
+def save_focal_result(arr, base_path):
+    """
+    Saves a focal result that might be [H,W], [D,H,W], [1,H,W], or [1,D,H,W].
+    - If it's a stack, writes one PNG per depth: base_path -> base_path.replace('.png', f'_z{d:03d}.png')
+    - If it's channels-first RGB(A), converts to HWC.
+    """
+    arr = np.asarray(arr)
+    arr = np.squeeze(arr)  # drop singleton dims
+
+    if arr.ndim == 2:
+        imageio.imwrite(base_path, _to8(arr))
+        return
+
+    if arr.ndim == 3:
+        # Case A: [D,H,W] focal stack -> save each slice
+        if arr.shape[0] not in (3, 4) and arr.shape[-1] not in (3, 4):
+            for d in range(arr.shape[0]):
+                imageio.imwrite(base_path.replace(".png", f"_z{d:03d}.png"),
+                                _to8(arr[d]))
+            return
+        # Case B: channels-first -> move to HWC
+        if arr.shape[0] in (3, 4) and arr.shape[1] != 3:
+            arr = np.moveaxis(arr, 0, -1)
+        if arr.shape[-1] in (3, 4):
+            imageio.imwrite(base_path, _to8(arr))
+            return
+
+    raise ValueError(f"Unsupported shape for saving: {arr.shape}")
+
+def ensure_shared_target_symlink(opt, D):
+    """
+    Make sure opt.out_dir has a symlink (or file) to a shared target cache:
+      <shared_dir>/target_amp_Tref{mi_T}_D{D}.pt
+    Creates the shared file if missing by computing on CPU once.
+    Returns the absolute path that main should pass to ComplexFramesToFocalStackTarget as cache_path.
+    """
+    # Where to keep the single canonical copy (configurable via env var)
+    shared_dir = Path(os.environ.get("TMNH_TARGET_CACHE_DIR", "outputs_fsopt_shared"))
+    shared_dir.mkdir(parents=True, exist_ok=True)
+
+    cache_basename = f"target_amp_Tref{getattr(opt,'mi_T',96)}_D{D}.pt"
+    shared_path   = shared_dir / cache_basename
+    out_dir       = Path(opt.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
+    local_path    = out_dir / cache_basename
+
+    # 1) If the shared file doesn't exist, build it once on CPU (no GPU RAM).
+    if not shared_path.exists():
+        print(f"[cache] Missing shared cache -> building once on CPU: {shared_path}")
+        from complex_dataset import ComplexFramesToFocalStackTarget
+        z_list = [float(z) for z in opt.z_list]
+        ds = ComplexFramesToFocalStackTarget(
+            T_ref=getattr(opt, "mi_T", 96),
+            z_list=z_list,
+            wavelength=float(opt.wavelength),
+            dx=float(opt.asm_dx), dy=float(opt.asm_dy),
+            device="cpu",
+            cache_path=None,
+            preview_dir=getattr(opt, "mi_dbg_dir", None)
+        )
+        target_amp = ds.target_amp.detach().cpu()
+        torch.save(target_amp, shared_path)
+        print(f"[cache] Wrote shared CPU cache: {shared_path}  shape={tuple(target_amp.shape)}")
+
+    # 2) Ensure the current run folder points to that shared file
+    if local_path.exists():
+        # already present (file or symlink) -> nothing to do
+        return str(local_path)
+
+    try:
+        # Prefer a relative symlink so folders can be moved together
+        rel_target = os.path.relpath(shared_path, start=out_dir)
+        os.symlink(rel_target, local_path)
+        print(f"[cache] Linked: {local_path} -> {rel_target}")
+    except (OSError, NotImplementedError):
+        # Windows without dev mode/admin: fall back to hardlink or copy
+        try:
+            os.link(shared_path, local_path)  # hardlink
+            print(f"[cache] Hardlinked: {local_path} -> {shared_path}")
+        except OSError:
+            shutil.copy2(shared_path, local_path)
+            print(f"[cache] Copied: {local_path} <- {shared_path}")
+
+    return str(local_path)
+
+def save_predicted_complex_fields(field_or_phase, z_list, wavelength, dx, dy,
+                                  out_dir, channel=0):
     import os, torch
     os.makedirs(out_dir, exist_ok=True)
 
+    fp = field_or_phase
+
+    # ---- Normalize shape ----
+    # Expect [T,H,W], [1,T,H,W], [T,1,H,W], [1,1,H,W], or [H,W]
+    if fp.ndim == 2:
+        fp = fp.unsqueeze(0)            # [H,W] -> [1,H,W]
+    elif fp.ndim == 4:
+        if fp.shape[0] == 1:            # [1,T,H,W] -> [T,H,W]
+            fp = fp[0]
+        elif fp.shape[1] == 1:          # [T,1,H,W] -> [T,H,W]
+            fp = fp[:, 0]
+        else:
+            raise ValueError(
+                f"Unsupported shape {tuple(fp.shape)}; "
+                "expected batch or channel dim = 1."
+            )
+    elif fp.ndim != 3:
+        raise ValueError(
+            f"Unsupported shape {tuple(fp.shape)}; need 2D, 3D, or 4D."
+        )
+
+    fp = fp.contiguous()
+    T, H, W = fp.shape
+
+    device = fp.device
+    wl = float(wavelength)
+    dx = float(dx); dy = float(dy)
+
+    # Build U0 from either phase or complex field
+    if torch.is_complex(fp):
+        U0 = fp
+    else:
+        U0 = torch.exp(1j * fp)
+
     def asm_prop(u0, z):
-        H, W = u0.shape
-        device = u0.device
-        k = 2.0 * torch.pi / float(wavelength)
-        fx = torch.fft.fftfreq(W, d=float(dx)).to(device)
-        fy = torch.fft.fftfreq(H, d=float(dy)).to(device)
+        k = 2.0 * torch.pi / wl
+        fx = torch.fft.fftfreq(W, d=dx).to(device)
+        fy = torch.fft.fftfreq(H, d=dy).to(device)
         FX, FY = torch.meshgrid(fx, fy, indexing="xy")
-        FX, FY = FX.T, FY.T
+        FX, FY = FX.T, FY.T  # -> [H,W]
         omega2 = (2*torch.pi*FX)**2 + (2*torch.pi*FY)**2
         pos = (k**2 - omega2).clamp(min=0).sqrt()
         neg = (omega2 - k**2).clamp(min=0).sqrt()
         H_z = torch.exp(1j * (float(z) * pos)) * torch.exp(-float(z) * neg)
         return torch.fft.ifft2(torch.fft.fft2(u0) * H_z)
 
-    # final_phase: [T,H,W] or [H,W]
-    if final_phase.dim() == 2:
-        final_phase = final_phase.unsqueeze(0)
-    T, H, W = final_phase.shape
-
-    # Complex at SLM per frame
-    U0 = torch.exp(1j * final_phase)  # [T,H,W]
+    # Save SLM-plane fields
     for t in range(T):
-        torch.save(U0[t].detach().cpu(),
-                   os.path.join(out_dir, f"U_pred_slm_ch{channel}_t{t:02d}.pt"))
+        torch.save(
+            U0[t].detach().cpu(),
+            os.path.join(out_dir, f"U_pred_slm_ch{channel}_t{t:02d}.pt")
+        )
 
     # Propagate each frame to each z and save
     for di, z in enumerate(z_list):
         for t in range(T):
             Uz = asm_prop(U0[t], z)
-            torch.save(Uz.detach().cpu(),
-                       os.path.join(out_dir, f"U_pred_ch{channel}_t{t:02d}_z{di:02d}_z{float(z):.6f}m.pt"))
+            torch.save(
+                Uz.detach().cpu(),
+                os.path.join(
+                    out_dir,
+                    f"U_pred_ch{channel}_t{t:02d}_z{di:02d}_z{float(z):.6f}m.pt"
+                )
+            )
 
 
 
@@ -97,6 +242,58 @@ def main():
     params.add_parameters(p, 'eval')
     opt = params.set_configs(p.parse_args())
     params.add_lf_params(opt)
+
+    ## ADDED
+    args = p.parse_args()
+    opt = params.set_configs(args)
+    params.add_lf_params(opt)
+    
+    # If user explicitly passed --wavelength on CLI, force it (and per-channel)
+    if any(a.startswith("--wavelength") or a == "--wavelength" for a in os.sys.argv):
+        user_wl = float(args.wavelength)
+        opt.wavelength = user_wl
+        if opt.channel is not None:
+            opt.wavelengths = list(opt.wavelengths)
+            opt.wavelengths[opt.channel] = user_wl
+
+    # ---- Use 1024×1024 everywhere  ----
+    if opt.complex_input:
+        opt.citl = False
+        opt.slm_type = 'holoeye'
+        opt.use_lut = False
+        opt.slm_res   = (1024, 1024)
+        opt.image_res = opt.slm_res
+        opt.roi_res   = opt.slm_res
+        opt.full_roi  = True
+
+    # ---- Make the forward model use ALL depths from --z_list_m ----
+    # Target has D=len(opt.z_list); make sim model match it.
+    opt.prop_dists_from_wrp = [float(z) for z in opt.z_list]
+    opt.num_planes = len(opt.prop_dists_from_wrp)
+
+    # Train/eval plane selections must be valid for the new length
+    opt.training_plane_idxs = list(range(opt.num_planes))
+    opt.heldout_plane_idxs = []
+    opt.eval_plane_idx = None
+
+    # Avoid shape/length assumptions in energy compensation
+    opt.energy_compensation = False
+
+    # >>> NEW: ensure a shared cache and a local symlink in opt.out_dir
+    # cache_path = ensure_shared_target_symlink(opt, D=len(opt.z_list))
+    cache_path = (opt.target_cache_path
+              if getattr(opt, 'target_cache_path', None)
+              else os.path.join(opt.out_dir, f"target_amp_Tref{getattr(opt,'mi_T',96)}_D{len(opt.z_list)}.pt"))
+
+
+    if not os.path.isfile(cache_path):
+        raise FileNotFoundError(
+            f"[target-cache] Missing cache at {cache_path}\n"
+            f"Hint: symlink or pass --target_cache_path to the shared file, "
+            f"and ensure --mi_T and --z_list_m exactly match the cache."
+        )
+    print(f"[target-cache] Will load cached target: {cache_path}")
+
     dev = torch.device('cuda')
 
     run_id = params.run_id(opt)
@@ -117,6 +314,10 @@ def main():
     if opt.citl:
         camera_prop = prop_physical.PhysicalProp(*(params.hw_params(opt)), shutter_speed=opt.shutter_speed).to(dev)
         camera_prop.calibrate_total_laser_energy() # important!
+
+    # check wavelength
+    print("Wavelength check:", "scalar =", opt.wavelength, "per-channel =", opt.wavelengths[opt.channel])
+
     sim_prop = prop_model.model(opt)
     sim_prop.eval()
 
@@ -132,16 +333,13 @@ def main():
 
     # Loader
     if opt.complex_input:
-        # Build a 96-frame (or opt.mi_T) target focal stack once.
-        # We'll cache it so multiple runs (T=1,12,24) re-use the same target.
-        cache_path = os.path.join(opt.out_dir, "target_amp_Tref{getattr(opt,'mi_T',96)}_D{len(opt.z_list)}.pt")
         ds = ComplexFramesToFocalStackTarget(
-            T_ref=getattr(opt, "mi_T", 96),     # you can pass --mi_T=96
+        T_ref=getattr(opt, "mi_T", 96),
             z_list=opt.z_list,
             wavelength=opt.wavelength,
             dx=opt.asm_dx, dy=opt.asm_dy,
-            device=dev,
-            cache_path=cache_path,
+            device="cpu",               # keep target on CPU here
+            cache_path=cache_path,      # MUST hit the early-return path
             preview_dir=getattr(opt, "mi_dbg_dir", None)
         )
         img_loader = DataLoader(ds, batch_size=1, shuffle=False)
@@ -200,18 +398,23 @@ def main():
                             
         # optimized slm phase
         final_phase = results['final_phase']
+        final_field = results['final_field']
         recon_amp = results['recon_amp']
         target_amp = results['target_amp']
 
         if getattr(opt, 'save_complex', False) and getattr(opt, 'complex_input', False):
+            # Prefer final_field if available (complex mode), else fall back to phase
+            field_or_phase = results.get('final_field', final_phase)
+
             save_predicted_complex_fields(
-                final_phase=final_phase,
+                field_or_phase,
                 z_list=opt.z_list,
                 wavelength=opt.wavelength,
                 dx=opt.asm_dx, dy=opt.asm_dy,
-                out_dir=os.path.join(opt.out_dir, f"predicted_T{final_phase.shape[0]}"),
+                out_dir=os.path.join(opt.out_dir, f"predicted_T{field_or_phase.shape[0]}"),
                 channel=opt.channel if opt.channel is not None else 0
             )
+
 
         # encoding for SLM & save it out
         if opt.random_gen:
@@ -237,11 +440,27 @@ def main():
                     recon_amp = recon_amp.transpose(1, 2, 0)
                     target_amp = target_amp.transpose(1, 2, 0)
 
-                recon_out = utils.srgb_lin2gamma(np.clip(recon_amp**2, 0, 1)) # linearize and gamma
-                target_out = utils.srgb_lin2gamma(np.clip(target_amp**2, 0, 1)) # linearize and gamma
+                # recon_out = utils.srgb_lin2gamma(np.clip(recon_amp**2, 0, 1)) # linearize and gamma
+                # target_out = utils.srgb_lin2gamma(np.clip(target_amp**2, 0, 1)) # linearize and gamma
 
-                imageio.imwrite(recon_out_path, (recon_out * 255).astype(np.uint8))
-                imageio.imwrite(target_out_path, (target_out * 255).astype(np.uint8))
+                target_out = results['target_amp'].detach().float().cpu().numpy()
+                recon_out = results['recon_amp'].detach().float().cpu().numpy()
+
+                # Paths
+                target_vid = os.path.join(out_path, "target_focalstack.mp4")
+                recon_vid  = os.path.join(out_path, "recon_focalstack.mp4")
+
+                # Save videos
+                save_stack_video(results['target_amp'], target_vid)                 # your GT stack
+                save_stack_video(results['recon_amp'], recon_vid)                   # optimized stack
+                print(f"[saved] {target_vid}")
+                print(f"[saved] {recon_vid}")
+                
+                save_focal_result(target_out, target_out_path)
+                save_focal_result(recon_out, recon_out_path)  # e.g., ".../recon.png"
+
+                # imageio.imwrite(recon_out_path, (recon_out * 255).astype(np.uint8))
+                # imageio.imwrite(target_out_path, (target_out * 255).astype(np.uint8))
 
     if camera_prop is not None:
         camera_prop.disconnect()

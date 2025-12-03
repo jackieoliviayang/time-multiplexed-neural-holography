@@ -68,27 +68,65 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
     print("Naive gradient descent")
     assert forward_prop is not None
     dev = init_phase.device
+    # h, w = init_phase.shape[-2], init_phase.shape[-1] # total energy = h*w
 
+    # init_amp = torch.ones_like(init_phase) * 0.5
+    # init_amp_logits = torch.log(init_amp / (1 - init_amp)) # convert to inverse sigmoid
 
-    h, w = init_phase.shape[-2], init_phase.shape[-1] # total energy = h*w
-
-    init_amp = torch.ones_like(init_phase) * 0.5
-    init_amp_logits = torch.log(init_amp / (1 - init_amp)) # convert to inverse sigmoid
-
-    slm_phase = init_phase.requires_grad_(True)  # phase at the slm plane
-    slm_amp_logits = init_amp_logits.requires_grad_(True) # amplitude at the slm plane
+    # slm_phase = init_phase.requires_grad_(True)  # phase at the slm plane
+    # slm_amp_logits = init_amp_logits.requires_grad_(True) # amplitude at the slm plane
     
-    optvars = [{'params': slm_phase}]
-    if kwargs["optimize_amp"]:
-        optvars.append({'params': slm_amp_logits})
+    # optvars = [{'params': slm_phase}]
+    # if kwargs["optimize_amp"]:
+    #     optvars.append({'params': slm_amp_logits})
     
-    #if "opt_s" in reg_loss_fn_type:
-    #    s = torch.tensor(1.0).requires_grad_(True) # initial s value
-    #    optvars.append({'params': s})
-    #else:
-    #    s = None
+    # #if "opt_s" in reg_loss_fn_type:
+    # #    s = torch.tensor(1.0).requires_grad_(True) # initial s value
+    # #    optvars.append({'params': s})
+    # #else:
+    # #    s = None
+    # s = torch.tensor(1.0)
+    # optimizer = optim.Adam(optvars, lr=lr)
+
+    # handles cf opt or phase only
+    optimize_complex = kwargs.get("optimize_complex", False)
+
+    print("[GD] optimize_complex:", optimize_complex)
+
+    h, w = init_phase.shape[-2], init_phase.shape[-1]
+    optimize_amp = kwargs.get("optimize_amp", False)
+
+    if optimize_complex:
+        print("Initializing TRUE complex SLM field (free amp + phase)")
+
+        # --- Option A: purely random complex init ---
+        with torch.no_grad():
+            U_real = torch.randn_like(init_phase)
+            U_imag = torch.randn_like(init_phase)
+
+        U_real = U_real.clone().detach().requires_grad_(True)
+        U_imag = U_imag.clone().detach().requires_grad_(True)
+
+        slm_phase = None
+        slm_amp_logits = None
+        optvars = [{'params': U_real}, {'params': U_imag}]
+
+    else:
+        # Original phase-only behaviour (unchanged)
+        init_amp = torch.ones_like(init_phase) * 0.5
+        init_amp_logits = torch.log(init_amp / (1 - init_amp))
+
+        slm_phase = init_phase.requires_grad_(True)
+        slm_amp_logits = init_amp_logits.requires_grad_(True)
+
+        optvars = [{'params': slm_phase}]
+        if optimize_amp:
+            optvars.append({'params': slm_amp_logits})
+
     s = torch.tensor(1.0)
     optimizer = optim.Adam(optvars, lr=lr)
+
+
 
     loss_vals = []
     psnr_vals = []
@@ -117,17 +155,29 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
 
     for t in tqdm(range(num_iters)):
         optimizer.zero_grad()
-        if quantization is not None:
-            quantized_phase = quantization(slm_phase, t/num_iters)
+        
+        if optimize_complex:
+            # Build complex SLM field directly from U_real/U_imag
+            if flipud:
+                U_real_f = U_real.flip(dims=[2])
+                U_imag_f = U_imag.flip(dims=[2])
+            else:
+                U_real_f = U_real
+                U_imag_f = U_imag
+            
+            field_input = U_real_f + 1j * U_imag_f
         else:
-            quantized_phase = slm_phase
+            if quantization is not None:
+                quantized_phase = quantization(slm_phase, t/num_iters)
+            else:
+                quantized_phase = slm_phase
 
-        if flipud:
-            quantized_phase_f = quantized_phase.flip(dims=[2])
-        else:
-            quantized_phase_f = quantized_phase
+            if flipud:
+                quantized_phase_f = quantized_phase.flip(dims=[2])
+            else:
+                quantized_phase_f = quantized_phase
 
-        field_input = torch.exp(1j * quantized_phase_f)
+            field_input = torch.exp(1j * quantized_phase_f)
 
         recon_field = forward_prop(field_input)
         recon_field = utils.crop_image(recon_field, roi_res, pytorch=True, stacked_complex=False) # here, also record an uncropped image
@@ -177,12 +227,35 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
         loss_val.backward()
         optimizer.step()
 
-        with torch.no_grad():
+        # === DEBUG: print SLM amplitude stats ===
+        if optimize_complex and (t % 5000 == 0):
+            with torch.no_grad():
+                amp = torch.sqrt(U_real**2 + U_imag**2)
+                print(f"[iter {t:05d}] SLM amp stats: "
+                    f"min={amp.min().item():.3f}, "
+                    f"max={amp.max().item():.3f}, "
+                    f"mean={amp.mean().item():.3f}")
+
+        # with torch.no_grad():
+        #     if loss_val.item() < best_loss:
+        #         best_phase = slm_phase
+        #         best_loss = loss_val.item()
+        #         best_amp = s * final_amp # fits target image. 
+        #         best_iter = t + 1
+
+        with torch.no_grad(): # track complex field too
             if loss_val.item() < best_loss:
-                best_phase = slm_phase
+                if optimize_complex:
+                    best_field = U_real + 1j * U_imag
+                    best_phase = torch.angle(best_field)         # for compatibility
+                else:
+                    best_field = torch.exp(1j * slm_phase)       # same as before
+                    best_phase = slm_phase
+
                 best_loss = loss_val.item()
-                best_amp = s * final_amp # fits target image. 
+                best_amp = s * final_amp
                 best_iter = t + 1
+
             
             psnr = 20 * torch.log10(1 / torch.sqrt(((s * final_amp - target_amp)**2).mean()))
             psnr_vals.append(psnr.item())              
@@ -194,7 +267,8 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
             'best_loss': best_loss,
             'recon_amp': best_amp,
             'target_amp': target_amp,
-            'final_phase': best_phase
+            'final_phase': best_phase,
+            'final_field': best_field, # added
             }
 
 

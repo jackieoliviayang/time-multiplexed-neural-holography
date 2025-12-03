@@ -106,7 +106,6 @@ def add_parameters(p, mode='train'):
     # Initialization schemes
     p.add_argument('--init_phase_type', type=str, default="random", choices=["random"])
 
-
     # Quantization
     p.add_argument('--quan_method', type=str, default='None',
                    help='Quantization method, None, nn, nn_sigmoid, gumbel-softmax, ...')
@@ -137,6 +136,16 @@ def add_parameters(p, mode='train'):
     p.add_argument("--img_paths", type=str, nargs="+", default=None)
     p.add("--shutter_speed", type=float, nargs='+', default=100, help="Shutter speed of camera.")
     p.add("--num_data", type=int, default=100, help="Number of data to generate.")
+    p.add_argument('--mi_T', type=int, default=96,
+               help='Number of complex frames to average for the target focal stack (default: 96)')
+
+
+    # added to optimize directly over CF instead of PO
+    p.add_argument(
+        "--optimize_complex",
+        action="store_true",
+        help="Optimize a full complex field at the SLM instead of phase-only."
+    )
 
     # === Complex-field → focal-stack target (custom) ===
     p.add_argument('--complex_input', type=str2bool, default=False,
@@ -213,6 +222,9 @@ def add_parameters(p, mode='train'):
         p.add_argument("--target_cnn_residual", type=str2bool, default=False)
         p.add_argument("--min_mse_scaling", type=str2bool, default=False)
         p.add_argument("--dataset_subset", type=int, default=None)
+
+        # target stack
+        p.add_argument('--target_cache_path', type=str, default=None)
     
     return p
 

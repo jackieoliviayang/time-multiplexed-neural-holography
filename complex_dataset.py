@@ -3,8 +3,10 @@ from torch.utils.data import Dataset
 from pathlib import Path
 import sys, os, numpy as np, torch
 
+# complex_dataset.py
 def _import_loader_from_mutual_intensity():
     here = os.path.dirname(os.path.abspath(__file__))
+    # go to the parent of TMNH, then into mutual-intensity
     mi_dir = os.path.abspath(os.path.join(here, "..", "mutual-intensity"))
     if mi_dir not in sys.path:
         sys.path.insert(0, mi_dir)
