@@ -13,7 +13,7 @@
     "mod": null,
     "data_path": "data/2d",
     "exp": "",
-    "lr": 0.0001,
+    "lr": 0.2,
     "num_iters": 10000,
     "prop_dist": null,
     "num_frames": 1,

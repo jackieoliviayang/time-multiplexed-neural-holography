@@ -70,6 +70,17 @@ def save_stack_video(stack, path, fps=12):
         writer.append_data(f)
     writer.close()
 
+def save_stack_video_with_norm(stack, path, norm):
+    if hasattr(stack, "detach"):
+        stack = stack.detach().cpu().numpy()
+    stack = np.squeeze(stack)
+    frames = [(stack[d] / norm * 255).clip(0, 255).astype(np.uint8)
+              for d in range(stack.shape[0])]
+    writer = imageio.get_writer(path, fps=12, codec="libx264", quality=8)
+    for f in frames:
+        writer.append_data(f)
+    writer.close()
+
 def _to8(x):
     x = np.nan_to_num(x)
     x = np.clip(x, 0, None)
@@ -417,50 +428,143 @@ def main():
 
 
         # encoding for SLM & save it out
+        # if opt.random_gen:
+        #     # decompose it into several 1-bit phases
+        #     for k, final_phase_1bit in enumerate(final_phase):
+        #         phase_out = phase_encoding(final_phase_1bit.unsqueeze(0), opt.slm_type)
+        #         phase_out_path = os.path.join(out_path, f'{target_idx}_{opt.num_iters}{k}.png')
+        #         imageio.imwrite(phase_out_path, phase_out)
+        # else:
+        #     phase_out = phase_encoding(final_phase, opt.slm_type)
+        #     recon_amp, target_amp = recon_amp.squeeze().detach().cpu().numpy(), target_amp.squeeze().detach().cpu().numpy()
+
+        #     # save final phase and intermediate phases
+        #     if phase_out is not None:
+        #         phase_out_path = os.path.join(out_path, f'{target_idx}_phase.png')
+        #         imageio.imwrite(phase_out_path, phase_out)
+
+        #     if opt.save_images:
+        #         recon_out_path = os.path.join(out_path, f'{target_idx}_recon.png')
+        #         target_out_path = os.path.join(out_path, f'{target_idx}_target.png')
+                
+        #         if opt.channel is None:
+        #             recon_amp = recon_amp.transpose(1, 2, 0)
+        #             target_amp = target_amp.transpose(1, 2, 0)
+
+        #         # recon_out = utils.srgb_lin2gamma(np.clip(recon_amp**2, 0, 1)) # linearize and gamma
+        #         # target_out = utils.srgb_lin2gamma(np.clip(target_amp**2, 0, 1)) # linearize and gamma
+
+        #         target_out = results['target_amp'].detach().float().cpu().numpy()
+        #         recon_out = results['recon_amp'].detach().float().cpu().numpy()
+
+        #         # Paths
+        #         target_vid = os.path.join(out_path, "target_focalstack.mp4")
+        #         recon_vid  = os.path.join(out_path, "recon_focalstack.mp4")
+
+        #         # Save videos
+        #         save_stack_video(results['target_amp'], target_vid)                 # your GT stack
+        #         save_stack_video(results['recon_amp'], recon_vid)                   # optimized stack
+        #         print(f"[saved] {target_vid}")
+        #         print(f"[saved] {recon_vid}")
+                
+        #         save_focal_result(target_out, target_out_path)
+        #         save_focal_result(recon_out, recon_out_path)  # e.g., ".../recon.png"
+
+        #         # imageio.imwrite(recon_out_path, (recon_out * 255).astype(np.uint8))
+        #         # imageio.imwrite(target_out_path, (target_out * 255).astype(np.uint8))
+                # encoding for SLM & save it out
         if opt.random_gen:
-            # decompose it into several 1-bit phases
+            # decompose it into several 1-bit phases (original behavior)
             for k, final_phase_1bit in enumerate(final_phase):
                 phase_out = phase_encoding(final_phase_1bit.unsqueeze(0), opt.slm_type)
                 phase_out_path = os.path.join(out_path, f'{target_idx}_{opt.num_iters}{k}.png')
                 imageio.imwrite(phase_out_path, phase_out)
         else:
-            phase_out = phase_encoding(final_phase, opt.slm_type)
-            recon_amp, target_amp = recon_amp.squeeze().detach().cpu().numpy(), target_amp.squeeze().detach().cpu().numpy()
+            # ----- COMPLEX MULTI-FRAME CASE: average across frames -----
+            if getattr(opt, 'complex_input', False) and getattr(opt, 'optimize_complex', False):
+                phase_tensor = results['final_phase']  # could be [T,1,H,W], [1,1,H,W], [T,H,W], [H,W], etc.
 
-            # save final phase and intermediate phases
-            if phase_out is not None:
+                pt = phase_tensor
+
+                # --- Normalize to at least [T, C, H, W] style ---
+
+                if pt.dim() == 4:
+                    # already [T, C, H, W]
+                    pass
+                elif pt.dim() == 3:
+                    # assume [T, H, W] -> add channel dim
+                    pt = pt.unsqueeze(1)          # [T,1,H,W]
+                elif pt.dim() == 2:
+                    # single [H,W] -> [1,1,H,W]
+                    pt = pt.unsqueeze(0).unsqueeze(0)
+                else:
+                    raise ValueError(f"Unexpected final_phase shape {pt.shape}")
+
+                # Now pt is [T, C, H, W]; we only care about phase in the first channel
+                # -> [T, H, W]
+                phase_T_HW = pt[:, 0, :, :]
+
+                # Circular average over time dimension T
+                # This works even if T == 1.
+                avg_complex = torch.exp(1j * phase_T_HW).mean(dim=0)  # [H,W] complex
+                avg_phase   = torch.angle(avg_complex)                # [H,W] real
+
+                # phase_encoding expects [B, C, H, W]
+                avg_phase_in = avg_phase.unsqueeze(0).unsqueeze(0)    # [1,1,H,W]
+
+                phase_out = phase_encoding(avg_phase_in, opt.slm_type)
+
+                # Make sure imageio sees a 2D image
+                phase_out = np.asarray(phase_out)
+                phase_out = np.squeeze(phase_out)  # -> [H,W] for single-channel
+
+                if phase_out.ndim != 2:
+                    raise ValueError(f"phase_out still not 2D, got {phase_out.shape}")
+
+                phase_out_path = os.path.join(out_path, f'{target_idx}_phase_avg.png')
+                imageio.imwrite(phase_out_path, phase_out)
+
+            else:
+                # Original single-frame / phase-only behavior
+                phase_out = phase_encoding(final_phase, opt.slm_type)
+                phase_out = np.asarray(phase_out)
+                phase_out = np.squeeze(phase_out)
+                if phase_out.ndim > 2:
+                    # if it somehow has an extra channel/batch dimension, take the first
+                    phase_out = phase_out[0]
+                if phase_out.ndim != 2:
+                    raise ValueError(f"phase_out not 2D in phase-only branch, got {phase_out.shape}")
                 phase_out_path = os.path.join(out_path, f'{target_idx}_phase.png')
                 imageio.imwrite(phase_out_path, phase_out)
 
-            if opt.save_images:
-                recon_out_path = os.path.join(out_path, f'{target_idx}_recon.png')
-                target_out_path = os.path.join(out_path, f'{target_idx}_target.png')
-                
-                if opt.channel is None:
-                    recon_amp = recon_amp.transpose(1, 2, 0)
-                    target_amp = target_amp.transpose(1, 2, 0)
+            # --- the rest (recon/target saving) stays the same ---
+            recon_amp, target_amp = (
+                recon_amp.squeeze().detach().cpu().numpy(),
+                target_amp.squeeze().detach().cpu().numpy(),
+            )
 
-                # recon_out = utils.srgb_lin2gamma(np.clip(recon_amp**2, 0, 1)) # linearize and gamma
-                # target_out = utils.srgb_lin2gamma(np.clip(target_amp**2, 0, 1)) # linearize and gamma
+            target_out = results['target_amp'].detach().float().cpu().numpy()
+            recon_out  = results['recon_amp'].detach().float().cpu().numpy()
 
-                target_out = results['target_amp'].detach().float().cpu().numpy()
-                recon_out = results['recon_amp'].detach().float().cpu().numpy()
+            # Paths
+            target_vid = os.path.join(out_path, "target_focalstack.mp4")
+            recon_vid  = os.path.join(out_path, "recon_focalstack.mp4")
 
-                # Paths
-                target_vid = os.path.join(out_path, "target_focalstack.mp4")
-                recon_vid  = os.path.join(out_path, "recon_focalstack.mp4")
+            # Global normalization for videos
+            global_max = float((recon_out.max() if recon_out.mean() >= target_out.mean() else target_out.max()) + 1e-12)
+            print("recon mean: ", recon_out.mean())
+            print("target mean:", target_out.mean())
 
-                # Save videos
-                save_stack_video(results['target_amp'], target_vid)                 # your GT stack
-                save_stack_video(results['recon_amp'], recon_vid)                   # optimized stack
-                print(f"[saved] {target_vid}")
-                print(f"[saved] {recon_vid}")
-                
-                save_focal_result(target_out, target_out_path)
-                save_focal_result(recon_out, recon_out_path)  # e.g., ".../recon.png"
+            save_stack_video_with_norm(target_out, target_vid, global_max)
+            save_stack_video_with_norm(recon_out,  recon_vid,  global_max)
+            print(f"[saved] {target_vid}")
+            print(f"[saved] {recon_vid}")
 
-                # imageio.imwrite(recon_out_path, (recon_out * 255).astype(np.uint8))
-                # imageio.imwrite(target_out_path, (target_out * 255).astype(np.uint8))
+            target_out_path = os.path.join(out_path, f'{target_idx}_target.png')
+            recon_out_path  = os.path.join(out_path, f'{target_idx}_recon.png')
+            save_focal_result(target_out, target_out_path)
+            save_focal_result(recon_out,  recon_out_path)
+
 
     if camera_prop is not None:
         camera_prop.disconnect()

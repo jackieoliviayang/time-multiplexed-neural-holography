@@ -73,6 +73,25 @@ class ComplexFramesToFocalStackTarget(Dataset):
     def __getitem__(self, idx):
         return {"target": self.target_amp}
 
+def load_gws_complex_frames(T_ref, device="cpu", preview_dir=None):
+    """
+    Load the GWS-RP complex wavefront frames exactly the same way
+    ComplexFramesToFocalStackTarget does internally.
+
+    Returns:
+        frames: [T_ref, H, W] complex64 tensor on `device`
+    """
+    device = device if isinstance(device, torch.device) else torch.device(device)
+
+    load_wf = _import_loader_from_mutual_intensity()
+    # Your mutual-intensity loader already knows how to read the separate .pt/.npy files.
+    frames, _ = load_wf(T_desired=T_ref, output_dir=preview_dir)
+
+    if isinstance(frames, np.ndarray):
+        frames = torch.from_numpy(frames)
+
+    frames = frames.to(torch.complex64).to(device)  # [T_ref, H, W]
+    return frames
 
 def angular_spectrum_propagate(u0, z, wavelength, dx, dy):
     H, W = u0.shape
