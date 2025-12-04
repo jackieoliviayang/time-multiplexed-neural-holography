@@ -534,9 +534,51 @@ def forward_model_config(model_type, opt):
             opt.share_f_amp = True
 
 
+# def add_lf_params(opt, dataset='olas'):
+#     """ Add Light-Field parameters """
+#     if opt.target.lower() in ('rgbd'):
+#         if opt.reg_lf_var > 0.0:
+#             opt.ang_res = (7, 7)
+#             opt.load_only_central_view = True
+#             opt.hop_len = (1, 1)
+#             opt.n_fft = opt.ang_res
+#             opt.win_len = opt.ang_res
+#             if opt.central_views:
+#                 opt.selected_views = (slice(1, 6, 1), slice(1, 6, 1))
+#             else:
+#                 opt.selected_views = None
+#             return opt
+#         else:
+#             return opt
+#     else:
+#         if dataset == 'olas':
+#             opt.ang_res = (9, 9)
+#             opt.load_only_central_view = opt.target.lower() == 'rgbd'
+#             opt.hop_len = (1, 1)
+#             opt.n_fft = opt.ang_res
+#             opt.win_len = opt.ang_res
+
+#         if dataset == 'parallax':
+#             opt.ang_res = (7, 7)
+#             opt.load_only_central_view = opt.target.lower() == 'rgbd'
+#             opt.hop_len = (1, 1)
+#             opt.n_fft = opt.ang_res
+#             opt.win_len = opt.ang_res
+
+#         if 'lf' in opt.target.lower():
+#             opt.prop_dist_from_wrp = [0.]
+#             opt.c_s = 700
+#             if opt.central_views:
+#                 opt.selected_views = (slice(1, 6, 1), slice(1, 6, 1))
+#             else:
+#                 opt.selected_views = None
+#   return opt
+
+
 def add_lf_params(opt, dataset='olas'):
     """ Add Light-Field parameters """
-    if opt.target.lower() in ('rgbd'):
+    # 3D / RGBD cases unchanged
+    if opt.target.lower() in ('rgbd',):
         if opt.reg_lf_var > 0.0:
             opt.ang_res = (7, 7)
             opt.load_only_central_view = True
@@ -547,30 +589,47 @@ def add_lf_params(opt, dataset='olas'):
                 opt.selected_views = (slice(1, 6, 1), slice(1, 6, 1))
             else:
                 opt.selected_views = None
-            return opt
+        return opt
+
+    # ---- 4D light-field target: use 7×7 views ----
+    if 'lf' in opt.target.lower():
+        # match your ground-truth LF (7×7 via holo2lf)
+        opt.ang_res = (7, 7)
+        opt.load_only_central_view = False  # we want the full LF
+        opt.hop_len = (1, 1)
+        opt.n_fft = opt.ang_res
+        opt.win_len = opt.ang_res
+
+        # LF is represented at a single depth plane from the WRP
+        opt.prop_dist_from_wrp = [0.0]
+        opt.c_s = 700
+
+        if opt.central_views:
+            opt.selected_views = (slice(1, 6, 1), slice(1, 6, 1))
         else:
-            return opt
-    else:
-        if dataset == 'olas':
-            opt.ang_res = (9, 9)
-            opt.load_only_central_view = opt.target.lower() == 'rgbd'
-            opt.hop_len = (1, 1)
-            opt.n_fft = opt.ang_res
-            opt.win_len = opt.ang_res
+            opt.selected_views = None
 
-        if dataset == 'parallax':
-            opt.ang_res = (7, 7)
-            opt.load_only_central_view = opt.target.lower() == 'rgbd'
-            opt.hop_len = (1, 1)
-            opt.n_fft = opt.ang_res
-            opt.win_len = opt.ang_res
+        return opt
 
-        if 'lf' in opt.target.lower():
-            opt.prop_dist_from_wrp = [0.]
-            opt.c_s = 700
-            if opt.central_views:
-                opt.selected_views = (slice(1, 6, 1), slice(1, 6, 1))
-            else:
-                opt.selected_views = None
+    # Everything else (2D, 2.5D, etc.) – keep original behavior
+    if dataset == 'olas':
+        opt.ang_res = (9, 9)
+        opt.load_only_central_view = opt.target.lower() == 'rgbd'
+        opt.hop_len = (1, 1)
+        opt.n_fft = opt.ang_res
+        opt.win_len = opt.ang_res
+
+    if dataset == 'parallax':
+        opt.ang_res = (7, 7)
+        opt.load_only_central_view = opt.target.lower() == 'rgbd'
+        opt.hop_len = (1, 1)
+        opt.n_fft = opt.ang_res
+        opt.win_len = opt.ang_res
+
+    if 'lf' not in opt.target.lower():
+        if opt.central_views:
+            opt.selected_views = (slice(1, 6, 1), slice(1, 6, 1))
+        else:
+            opt.selected_views = None
 
     return opt
