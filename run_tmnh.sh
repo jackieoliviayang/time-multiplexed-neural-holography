@@ -1,4 +1,4 @@
-export CUDA_VISIBLE_DEVICES=8
+export CUDA_VISIBLE_DEVICES=9
 
 python main.py \
   --complex_input=true \
@@ -12,7 +12,7 @@ print(",".join(f"{v:.6f}" for v in z))
 PY
 )" \
   --channel=1 \
-  --num_frames=1 \
+  --num_frames=8 \
   --num_iters=5000 \
   --lr=0.2 \
   --save_images \
