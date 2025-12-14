@@ -45,61 +45,54 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
                      time_joint=True, flipud=False, reg_lf_var=0.0, *args, **kwargs):
     """
     Gradient-descent based method for phase optimization.
-
-    :param init_phase:
-    :param target_amp:
-    :param target_mask:
-    :param forward_prop:
-    :param num_iters:
-    :param roi_res:
-    :param loss_fn:
-    :param lr:
-    :param out_path_idx:
-    :param citl:
-    :param camera_prop:
-    :param writer:
-    :param quantization:
-    :param time_joint:
-    :param flipud:
-    :param args:
-    :param kwargs:
-    :return:
     """
     print("Naive gradient descent")
     assert forward_prop is not None
     dev = init_phase.device
-    # h, w = init_phase.shape[-2], init_phase.shape[-1] # total energy = h*w
 
-    # init_amp = torch.ones_like(init_phase) * 0.5
-    # init_amp_logits = torch.log(init_amp / (1 - init_amp)) # convert to inverse sigmoid
-
-    # slm_phase = init_phase.requires_grad_(True)  # phase at the slm plane
-    # slm_amp_logits = init_amp_logits.requires_grad_(True) # amplitude at the slm plane
-    
-    # optvars = [{'params': slm_phase}]
-    # if kwargs["optimize_amp"]:
-    #     optvars.append({'params': slm_amp_logits})
-    
-    # #if "opt_s" in reg_loss_fn_type:
-    # #    s = torch.tensor(1.0).requires_grad_(True) # initial s value
-    # #    optvars.append({'params': s})
-    # #else:
-    # #    s = None
-    # s = torch.tensor(1.0)
-    # optimizer = optim.Adam(optvars, lr=lr)
-
-    # handles cf opt or phase only
     optimize_complex = kwargs.get("optimize_complex", False)
-
     print("[GD] optimize_complex:", optimize_complex)
+
+    # gws_init = kwargs.get("gws_init", None) ## TEST ##
 
     h, w = init_phase.shape[-2], init_phase.shape[-1]
     optimize_amp = kwargs.get("optimize_amp", False)
 
+    # ## TEST ## 
+    # if optimize_complex:
+    #     print("Initializing TRUE complex SLM field (free amp + phase)")
+
+    #     if gws_init is not None:
+    #         print("[GD] Using GT complex frames as initialization")
+    #         # Ensure shape matches init_phase: typically [T,1,H,W]
+    #         gt = gws_init
+    #         # If it's [T,H,W], add channel dim
+    #         if gt.dim() == 3:
+    #             gt = gt.unsqueeze(1)   # -> [T,1,H,W]
+    #         if gt.shape != init_phase.shape:
+    #             raise ValueError(
+    #                 f"gws_init shape {gt.shape} does not match init_phase {init_phase.shape}"
+    #             )
+    #         # Split into real / imag parameters
+    #         U_real = gt.real.clone().detach().requires_grad_(True)
+    #         U_imag = gt.imag.clone().detach().requires_grad_(True)
+    #     else:
+    #         # fallback: random complex init (old behavior)
+    #         with torch.no_grad():
+    #             U_real = torch.randn_like(init_phase)
+    #             U_imag = torch.randn_like(init_phase)
+
+    #         U_real = U_real.clone().detach().requires_grad_(True)
+    #         U_imag = U_imag.clone().detach().requires_grad_(True)
+
+    #     slm_phase = None
+    #     slm_amp_logits = None
+    #     optvars = [{'params': U_real}, {'params': U_imag}]
+
+    # rand init (original)
     if optimize_complex:
         print("Initializing TRUE complex SLM field (free amp + phase)")
 
-        # --- Option A: purely random complex init ---
         with torch.no_grad():
             U_real = torch.randn_like(init_phase)
             U_imag = torch.randn_like(init_phase)
@@ -110,9 +103,8 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
         slm_phase = None
         slm_amp_logits = None
         optvars = [{'params': U_real}, {'params': U_imag}]
-
     else:
-        # Original phase-only behaviour (unchanged)
+        # Original phase-only behaviour
         init_amp = torch.ones_like(init_phase) * 0.5
         init_amp_logits = torch.log(init_amp / (1 - init_amp))
 
@@ -126,16 +118,18 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
     s = torch.tensor(1.0)
     optimizer = optim.Adam(optvars, lr=lr)
 
-
-
     loss_vals = []
     psnr_vals = []
     loss_vals_quantized = []
     best_loss = 1e10
     best_iter = 0
     best_amp = None
-    lf_supervision = len(target_amp.shape) > 4
 
+    # NEW: track best SLM and best recon fields
+    best_slm_field = None       # SLM plane (what you had as best_field)
+    best_recon_field = None     # sensor/STFT plane
+
+    lf_supervision = len(target_amp.shape) > 4
     print("target amp shape", target_amp.shape)
     
     if target_mask is not None:
@@ -156,15 +150,14 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
     for t in tqdm(range(num_iters)):
         optimizer.zero_grad()
         
+        # ---- SLM-plane field ----
         if optimize_complex:
-            # Build complex SLM field directly from U_real/U_imag
             if flipud:
                 U_real_f = U_real.flip(dims=[2])
                 U_imag_f = U_imag.flip(dims=[2])
             else:
                 U_real_f = U_real
                 U_imag_f = U_imag
-            
             field_input = U_real_f + 1j * U_imag_f
         else:
             if quantization is not None:
@@ -179,12 +172,20 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
 
             field_input = torch.exp(1j * quantized_phase_f)
 
+        # ---- Forward model -> recon_field (sensor plane) ----
         recon_field = forward_prop(field_input)
-        recon_field = utils.crop_image(recon_field, roi_res, pytorch=True, stacked_complex=False) # here, also record an uncropped image
+        recon_field = utils.crop_image(recon_field, roi_res, pytorch=True, stacked_complex=False)
 
+        # ---- LF vs focal-stack supervision ----
         if lf_supervision:
-            recon_amp_t = holo2lf(recon_field, n_fft=kwargs['n_fft'], hop_length=kwargs['hop_len'],
-                                  win_length=kwargs['win_len'], device=dev, impl='torch').sqrt()
+            recon_amp_t = holo2lf(
+                recon_field,
+                n_fft=kwargs['n_fft'],
+                hop_length=kwargs['hop_len'],
+                win_length=kwargs['win_len'],
+                device=dev,
+                impl='torch'
+            ).sqrt()
         else:
             recon_amp_t = recon_field.abs()
 
@@ -195,10 +196,9 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
         
         if citl:  # surrogate gradients for CITL
             captured_amp = camera_prop(slm_phase, 1)
-            captured_amp = utils.crop_image(captured_amp, roi_res,
-                                            stacked_complex=False)
+            captured_amp = utils.crop_image(captured_amp, roi_res, stacked_complex=False)
             recon_amp_sim = recon_amp.clone()  # simulated reconstructed image
-            recon_amp = recon_amp + captured_amp - recon_amp.detach()  # reconstructed image with surrogate gradients
+            recon_amp = recon_amp + captured_amp - recon_amp.detach()
 
         # clip to range
         if target_mask is not None:
@@ -207,19 +207,30 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
         else:
             final_amp = recon_amp
 
-        # also track gradient of s
+        # scale s (per-batch scalar, but with broadcastable shape)
         with torch.no_grad():
-            s = (final_amp * target_amp).mean(dim=(-1, -2), keepdims=True) / (final_amp ** 2).mean(dim=(-1, -2), keepdims=True)  # scale minimizing MSE btw recon and target
-        
+            # per-pixel scale
+            # s = (final_amp * target_amp).mean(dim=(-1, -2), keepdims=True) / \
+            #     (final_amp ** 2).mean(dim=(-1, -2), keepdims=True)
+
+            s = (final_amp * target_amp).mean() / (final_amp ** 2).mean() 
+            print("Scale shape: ", s.shape) # this is torch.Size([])
+
         loss_val = loss_fn(s * final_amp, target_amp)
         
         mse_loss = ((s * final_amp - target_amp)**2).mean().item()
         psnr_val = 20 * np.log10(1 / np.sqrt(mse_loss))
 
-        # loss term for having even emission at in-focus points (STFT-based regularization described in Supplementary)
+        # reg term for LF
         if reg_lf_var > 0.0:
-            recon_amp_lf = holo2lf(recon_field, n_fft=kwargs['n_fft'], hop_length=kwargs['hop_len'],
-                                   win_length=kwargs['win_len'], device=dev, impl='torch')
+            recon_amp_lf = holo2lf(
+                recon_field,
+                n_fft=kwargs['n_fft'],
+                hop_length=kwargs['hop_len'],
+                win_length=kwargs['win_len'],
+                device=dev,
+                impl='torch'
+            )
             recon_amp_lf = s * recon_amp_lf.mean(dim=0, keepdims=True).sqrt()
             loss_lf_var = torch.mean(torch.var(recon_amp_lf, (-2, -1)))
             loss_val += reg_lf_var * loss_lf_var
@@ -227,49 +238,51 @@ def gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, 
         loss_val.backward()
         optimizer.step()
 
-        # === DEBUG: print SLM amplitude stats ===
+        # Optional debug
         if optimize_complex and (t % 5000 == 0):
             with torch.no_grad():
                 amp = torch.sqrt(U_real**2 + U_imag**2)
                 print(f"[iter {t:05d}] SLM amp stats: "
-                    f"min={amp.min().item():.3f}, "
-                    f"max={amp.max().item():.3f}, "
-                    f"mean={amp.mean().item():.3f}")
+                      f"min={amp.min().item():.3f}, "
+                      f"max={amp.max().item():.3f}, "
+                      f"mean={amp.mean().item():.3f}")
 
-        # with torch.no_grad():
-        #     if loss_val.item() < best_loss:
-        #         best_phase = slm_phase
-        #         best_loss = loss_val.item()
-        #         best_amp = s * final_amp # fits target image. 
-        #         best_iter = t + 1
-
-        with torch.no_grad(): # track complex field too
+        with torch.no_grad():
             if loss_val.item() < best_loss:
+                # --- Best SLM-plane complex field (for FS etc.) ---
                 if optimize_complex:
-                    best_field = U_real + 1j * U_imag
-                    best_phase = torch.angle(best_field)         # for compatibility
+                    slm_field = U_real + 1j * U_imag
+                    best_phase = torch.angle(slm_field)
                 else:
-                    best_field = torch.exp(1j * slm_phase)       # same as before
+                    slm_field = torch.exp(1j * slm_phase)
                     best_phase = slm_phase
 
                 best_loss = loss_val.item()
                 best_amp = s * final_amp
                 best_iter = t + 1
 
-            
-            psnr = 20 * torch.log10(1 / torch.sqrt(((s * final_amp - target_amp)**2).mean()))
-            psnr_vals.append(psnr.item())              
+                # Save copies so graph is not kept
+                best_slm_field   = slm_field.detach().clone()
+                best_recon_field = recon_field.detach().clone()
 
-    return {'loss_vals': loss_vals,
-            'psnr_vals': psnr_vals,
-            'loss_vals_q': loss_vals_quantized,
-            'best_iter': best_iter,
-            'best_loss': best_loss,
-            'recon_amp': best_amp,
-            'target_amp': target_amp,
-            'final_phase': best_phase,
-            'final_field': best_field, # added
-            }
+            psnr = 20 * torch.log10(1 / torch.sqrt(((s * final_amp - target_amp)**2).mean()))
+            psnr_vals.append(psnr.item())
+
+    return {
+        'loss_vals': loss_vals,
+        'psnr_vals': psnr_vals,
+        'loss_vals_q': loss_vals_quantized,
+        'best_iter': best_iter,
+        'best_loss': best_loss,
+        'recon_amp': best_amp,
+        'target_amp': target_amp,
+        'final_phase': best_phase,
+        # SLM-plane complex field (backwards compatible name + explicit name)
+        'final_field': best_slm_field,
+        'final_slm_field': best_slm_field,
+        # NEW: sensor-/STFT-plane complex field matching recon_amp
+        'final_recon_field': best_recon_field,
+    }
 
 
 def efficient_gradient_descent(init_phase, target_amp, target_mask=None, target_idx=None, forward_prop=None, num_iters=1000, roi_res=None,
