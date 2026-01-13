@@ -11,41 +11,41 @@ MI_T=24
 # 1) Build LF targets (CPU)
 # -------------------------
 
-python gen_target_lf.py \
-  --mi_T ${MI_T} \
-  --color red \
-  --wavelength 6.38e-7 \
-  --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
-  --hop_len 1 \
-  --win_len 7 \
-  --time_joint \
-  --out_dir outputs_lfopt_shared \
-  --preview_dir outputs_lfopt_shared/previews/red
+# python gen_target_lf.py \
+#   --mi_T ${MI_T} \
+#   --color red \
+#   --wavelength 6.38e-7 \
+#   --asm_dx 8e-6 --asm_dy 8e-6 \
+#   --n_fft 7 \
+#   --hop_len 1 \
+#   --win_len 7 \
+#   --time_joint \
+#   --out_dir outputs_lfopt_shared \
+#   --preview_dir outputs_lfopt_shared/previews/red
 
-python gen_target_lf.py \
-  --mi_T ${MI_T} \
-  --color green \
-  --wavelength 5.20e-7 \
-  --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
-  --hop_len 1 \
-  --win_len 7 \
-  --time_joint \
-  --out_dir outputs_lfopt_shared \
-  --preview_dir outputs_lfopt_shared/previews/green
+# python gen_target_lf.py \
+#   --mi_T ${MI_T} \
+#   --color green \
+#   --wavelength 5.20e-7 \
+#   --asm_dx 8e-6 --asm_dy 8e-6 \
+#   --n_fft 7 \
+#   --hop_len 1 \
+#   --win_len 7 \
+#   --time_joint \
+#   --out_dir outputs_lfopt_shared \
+#   --preview_dir outputs_lfopt_shared/previews/green
 
-python gen_target_lf.py \
-  --mi_T ${MI_T} \
-  --color blue \
-  --wavelength 4.88e-7 \
-  --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
-  --hop_len 1 \
-  --win_len 7 \
-  --time_joint \
-  --out_dir outputs_lfopt_shared \
-  --preview_dir outputs_lfopt_shared/previews/blue
+# python gen_target_lf.py \
+#   --mi_T ${MI_T} \
+#   --color blue \
+#   --wavelength 4.88e-7 \
+#   --asm_dx 8e-6 --asm_dy 8e-6 \
+#   --n_fft 7 \
+#   --hop_len 1 \
+#   --win_len 7 \
+#   --time_joint \
+#   --out_dir outputs_lfopt_shared \
+#   --preview_dir outputs_lfopt_shared/previews/blue
 
 # ---------------------------------
 # 2) Run LF optimization (3 GPUs)

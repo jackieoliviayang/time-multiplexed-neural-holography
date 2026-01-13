@@ -116,7 +116,12 @@ def main():
 
     # 1) Load GWS complex frames using the same loader as ComplexFramesToFocalStackTarget
     load_wf = _import_loader_from_mutual_intensity()
-    frames, _ = load_wf(T_desired=args.mi_T, output_dir=args.preview_dir)
+    try:
+        frames, _ = load_wf(T_desired=args.mi_T, output_dir=args.preview_dir, color=args.color)
+    except TypeError:
+        CHANNEL = {"red": 0, "green": 1, "blue": 2}[args.color]
+        frames, _ = load_wf(T_desired=args.mi_T, output_dir=args.preview_dir, channel=CHANNEL)
+
     # frames: [T, H, W] complex (np or torch)
     if isinstance(frames, np.ndarray):
         frames = torch.from_numpy(frames)
