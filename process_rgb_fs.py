@@ -31,7 +31,6 @@ def write_rgb_video(stack_rgb, out_mp4, fps=12, norm=None):
     """
     D = stack_rgb.shape[0]
     if norm is None:
-        # robust-ish normalization across all depths/channels
         flat = stack_rgb.reshape(-1, 3)
         norm = np.quantile(flat, 0.999) + 1e-12
 
@@ -50,17 +49,14 @@ def write_rgb_pngs(stack_rgb, out_dir, prefix, norm):
         imageio.imwrite(os.path.join(out_dir, f"{prefix}_z{d:03d}.png"), frame)
 
 def find_amp_pt(run_dir, channel):
-    # looks for focalstack_amp_ch{channel}.pt anywhere under run_dir
     pat = os.path.join(run_dir, "**", f"focalstack_amp_ch{channel}.pt")
     hits = glob.glob(pat, recursive=True)
     if not hits:
         raise FileNotFoundError(f"No match for {pat}")
-    # choose newest
     hits.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return hits[0]
 
 def main(red_dir, green_dir, blue_dir, out_dir):
-    # load per-channel stacks
     r_path = find_amp_pt(red_dir,   0)
     g_path = find_amp_pt(green_dir, 1)
     b_path = find_amp_pt(blue_dir,  2)
@@ -77,34 +73,51 @@ def main(red_dir, green_dir, blue_dir, out_dir):
     g_tgt = _squeeze_stack(g["target_amp"])
     b_tgt = _squeeze_stack(b["target_amp"])
 
-    # sanity: match shapes
     if not (r_recon.shape == g_recon.shape == b_recon.shape):
         raise ValueError(f"Recon shapes mismatch: R{tuple(r_recon.shape)} G{tuple(g_recon.shape)} B{tuple(b_recon.shape)}")
     if not (r_tgt.shape == g_tgt.shape == b_tgt.shape):
         raise ValueError(f"Target shapes mismatch: R{tuple(r_tgt.shape)} G{tuple(g_tgt.shape)} B{tuple(b_tgt.shape)}")
 
-    # stack into RGB: [D,H,W,3]
-    recon_rgb = torch.stack([r_recon, g_recon, b_recon], dim=-1).numpy()
-    tgt_rgb   = torch.stack([r_tgt,   g_tgt,   b_tgt],   dim=-1).numpy()
+    # stack into RGB: [D,H,W,3] float32
+    recon_rgb = torch.stack([r_recon, g_recon, b_recon], dim=-1)  # torch [D,H,W,3]
+    tgt_rgb   = torch.stack([r_tgt,   g_tgt,   b_tgt],   dim=-1)  # torch [D,H,W,3]
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # use one shared norm for both target & recon so colors match visually
-    combo = np.concatenate([recon_rgb.reshape(-1,3), tgt_rgb.reshape(-1,3)], axis=0)
-    norm = np.quantile(combo, 0.999) + 1e-12
+    # shared visualization norm
+    combo = torch.cat([recon_rgb.reshape(-1, 3), tgt_rgb.reshape(-1, 3)], dim=0).numpy()
+    norm = float(np.quantile(combo, 0.999) + 1e-12)
+
+    # ---- NEW: save full-color stacks to .pt ----
+    rgb_pt_path = os.path.join(out_dir, "focalstack_amp_rgb.pt")
+    torch.save(
+        {
+            "recon_amp_rgb": recon_rgb.contiguous(),   # [D,H,W,3], float32
+            "target_amp_rgb": tgt_rgb.contiguous(),    # [D,H,W,3], float32
+            "norm_vis_0p999": norm,
+            "src": {"red": r_path, "green": g_path, "blue": b_path},
+        },
+        rgb_pt_path
+    )
+    print(f"[saved] {rgb_pt_path}")
+
+    # videos / pngs
+    recon_rgb_np = recon_rgb.numpy()
+    tgt_rgb_np   = tgt_rgb.numpy()
 
     recon_mp4 = os.path.join(out_dir, "recon_focalstack_rgb.mp4")
     tgt_mp4   = os.path.join(out_dir, "target_focalstack_rgb.mp4")
 
-    write_rgb_video(tgt_rgb,   tgt_mp4,   fps=12, norm=norm)
-    write_rgb_video(recon_rgb, recon_mp4, fps=12, norm=norm)
+    write_rgb_video(tgt_rgb_np,   tgt_mp4,   fps=12, norm=norm)
+    write_rgb_video(recon_rgb_np, recon_mp4, fps=12, norm=norm)
 
-    write_rgb_pngs(tgt_rgb,   out_dir, "target_rgb", norm)
-    write_rgb_pngs(recon_rgb, out_dir, "recon_rgb",  norm)
+    write_rgb_pngs(tgt_rgb_np,   out_dir, "target_rgb", norm)
+    write_rgb_pngs(recon_rgb_np, out_dir, "recon_rgb",  norm)
 
     print("[done]")
     print("  target:", tgt_mp4)
     print("  recon :", recon_mp4)
+    print("  pt    :", rgb_pt_path)
     print("  pngs  :", out_dir)
 
 if __name__ == "__main__":
