@@ -30,6 +30,10 @@ def parse_args():
     # Metadata / consistency
     p.add_argument("--mi_T", type=int, default=24,
                    help="Number of reference frames (for naming / sanity checks).")
+    p.add_argument("--color", type=str, default="green",
+               choices=["red", "green", "blue"],
+               help="Which color channel this LF target corresponds to (affects cache name).")
+
 
     # Optical parameters (kept for consistency; not heavily used by holo2lf)
     p.add_argument("--wavelength", type=float, default=5.32e-7,
@@ -94,7 +98,7 @@ def main():
     os.makedirs(args.out_dir, exist_ok=True)
     cache_path = os.path.join(
         args.out_dir,
-        f"target_ampLF_Tref{args.mi_T}.pt"
+        f"target_ampLF_{args.color}_Tref{args.mi_T}.pt"
     )
 
     device = torch.device("cpu")
