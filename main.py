@@ -119,7 +119,7 @@ def save_focal_result(arr, base_path):
 
     raise ValueError(f"Unsupported shape for saving: {arr.shape}")
 
-def ensure_shared_target_symlink(opt, D):
+def ensure_shared_target_symlink(opt, D, color="red"):
     """
     Make sure opt.out_dir has a symlink (or file) to a shared target cache:
       <shared_dir>/target_amp_Tref{mi_T}_D{D}.pt
@@ -130,7 +130,10 @@ def ensure_shared_target_symlink(opt, D):
     shared_dir = Path(os.environ.get("TMNH_TARGET_CACHE_DIR", "outputs_fsopt_shared"))
     shared_dir.mkdir(parents=True, exist_ok=True)
 
-    cache_basename = f"target_amp_Tref{getattr(opt,'mi_T',96)}_D{D}.pt"
+    # cache_basename = f"target_amp_Tref{getattr(opt,'mi_T',96)}_D{D}.pt"
+    mi_T = int(opt.mi_T)
+    cache_basename = f"target_amp_{color}_Tref{mi_T}_D{D}.pt"
+
     shared_path   = shared_dir / cache_basename
     out_dir       = Path(opt.out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     local_path    = out_dir / cache_basename
@@ -141,14 +144,17 @@ def ensure_shared_target_symlink(opt, D):
         from complex_dataset import ComplexFramesToFocalStackTarget
         z_list = [float(z) for z in opt.z_list]
         ds = ComplexFramesToFocalStackTarget(
-            T_ref=getattr(opt, "mi_T", 96),
-            z_list=z_list,
-            wavelength=float(opt.wavelength),
-            dx=float(opt.asm_dx), dy=float(opt.asm_dy),
+            T_ref=opt.mi_T,
+            z_list=opt.z_list,
+            wavelength=opt.wavelength,
+            dx=opt.asm_dx, dy=opt.asm_dy,
             device="cpu",
             cache_path=None,
-            preview_dir=getattr(opt, "mi_dbg_dir", None)
+            preview_dir=getattr(opt, "mi_dbg_dir", None),
+            color=color,
         )
+
+
         target_amp = ds.target_amp.detach().cpu()
         torch.save(target_amp, shared_path)
         print(f"[cache] Wrote shared CPU cache: {shared_path}  shape={tuple(target_amp.shape)}")
@@ -255,6 +261,7 @@ def _is_lightfield_target(arr: np.ndarray) -> bool:
     return arr.ndim >= 5
 
 
+
 def main():
     # Command line argument processing / Parameters
     torch.set_default_dtype(torch.float32)
@@ -262,13 +269,17 @@ def main():
     p.add('-c', '--config_filepath', required=False,
           is_config_file=True, help='Path to config file.')
     params.add_parameters(p, 'eval')
-    opt = params.set_configs(p.parse_args())
-    params.add_lf_params(opt)
-
-    ## ADDED
     args = p.parse_args()
     opt = params.set_configs(args)
     params.add_lf_params(opt)
+
+    CHANNEL_TO_COLOR = {0: "red", 1: "green", 2: "blue"}
+    if opt.channel is None:
+        raise ValueError("For complex_input per-color runs, you must pass --channel 0/1/2.")
+    color = CHANNEL_TO_COLOR[int(opt.channel)]
+
+    print(f"[color] channel={opt.channel} -> color={color}")
+
 
     print("[LF params at runtime] n_fft =", opt.n_fft,
       "hop_len =", opt.hop_len,
@@ -309,9 +320,14 @@ def main():
 
     # >>> NEW: ensure a shared cache and a local symlink in opt.out_dir
     # cache_path = ensure_shared_target_symlink(opt, D=len(opt.z_list))
-    cache_path = (opt.target_cache_path
-              if getattr(opt, 'target_cache_path', None)
-              else os.path.join(opt.out_dir, f"target_amp_Tref{getattr(opt,'mi_T',96)}_D{len(opt.z_list)}.pt"))
+    cache_path = ensure_shared_target_symlink(opt, D=len(opt.z_list), color=color)
+
+    # cache_path = (
+    #     opt.target_cache_path
+    #     if getattr(opt, "target_cache_path", None)
+    #     else os.path.join(opt.out_dir, f"target_amp_{color}_Tref{getattr(opt,'mi_T',96)}_D{len(opt.z_list)}.pt")
+    # )
+
 
 
     if not os.path.isfile(cache_path):
@@ -388,13 +404,14 @@ def main():
     # Loader
     if opt.complex_input:
         ds = ComplexFramesToFocalStackTarget(
-            T_ref=getattr(opt, "mi_T", 96),
+            T_ref=opt.mi_T,
             z_list=opt.z_list,
             wavelength=opt.wavelength,
             dx=opt.asm_dx, dy=opt.asm_dy,
-            device="cpu",               # keep target on CPU here
-            cache_path=cache_path,      # MUST hit the early-return path
-            preview_dir=getattr(opt, "mi_dbg_dir", None)
+            device="cpu",
+            cache_path=cache_path,
+            preview_dir=getattr(opt, "mi_dbg_dir", None),
+            color=color,   # <-- NEW
         )
         img_loader = DataLoader(ds, batch_size=1, shuffle=False)
     else:
@@ -644,6 +661,17 @@ def main():
 
             else:
                 # ===================== FOCAL STACK MODE (ORIGINAL) =====================
+                # Save raw stacks for later RGB stacking
+                torch.save(
+                    {
+                        "recon_amp": results["recon_amp"].detach().float().cpu(),   # [B?,D,H,W] or [D,H,W]
+                        "target_amp": results["target_amp"].detach().float().cpu(),
+                    },
+                    os.path.join(out_path, f"focalstack_amp_ch{opt.channel}.pt")
+                )
+                print(f"[saved] focalstack_amp_ch{opt.channel}.pt")
+
+
                 # Keep original behavior: depth-stack videos + PNGs
                 target_out_np = target_out
                 recon_out_np  = recon_out

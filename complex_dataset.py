@@ -22,7 +22,8 @@ class ComplexFramesToFocalStackTarget(Dataset):
     Optionally caches the target tensor to disk to reuse across runs.
     """
     def __init__(self, T_ref, z_list, wavelength=532e-9, dx=8e-6, dy=8e-6,
-                 device="cpu", cache_path=None, preview_dir=None):
+                 device="cpu", cache_path=None, preview_dir=None,
+                 color="red"):   # add color channel
         super().__init__()
         self.device = device if isinstance(device, torch.device) else torch.device(device)
         self.z_list = [float(z) for z in z_list]
@@ -35,7 +36,7 @@ class ComplexFramesToFocalStackTarget(Dataset):
 
         load_wf = _import_loader_from_mutual_intensity()
         # Your loader returns (frames: [T_ref,H,W] complex, (H,W))
-        frames, _ = load_wf(T_desired=T_ref, output_dir=preview_dir)
+        frames, _ = load_wf(T_desired=T_ref, output_dir=preview_dir, color=color) # add color
         if isinstance(frames, np.ndarray):
             frames = torch.from_numpy(frames)
         frames = frames.to(torch.complex64).to(self.device)  # [T_ref,H,W]

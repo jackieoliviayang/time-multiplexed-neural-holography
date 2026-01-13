@@ -5,3 +5,10 @@ outputs*/
 # python cache
 __pycache__/
 *.pyc
+
+# binary outputs
+*.pt
+*.png
+
+# logs
+logs/

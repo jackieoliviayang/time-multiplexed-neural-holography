@@ -11,9 +11,9 @@ Usage example:
         --pred_dir outputs_lfopt_24/predicted_T8_sensor \
         --channel 1 \
         --num_frames 8 \
-        --n_fft 96 \
-        --hop_len 12 \
-        --win_len 96 \
+        --n_fft 7 \
+        --hop_len 1 \
+        --win_len 7 \
         --time_joint \
         --out_dir outputs_lfopt_24/lf_verify
 
