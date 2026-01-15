@@ -60,7 +60,7 @@ CUDA_VISIBLE_DEVICES=7 python main.py \
   --z_list_m=0.0 \
   --channel=0 \
   --num_frames=8 \
-  --num_iters=5000 \
+  --num_iters=10000 \
   --lr=0.6 \
   --save_images \
   --save_complex=true \
@@ -78,7 +78,7 @@ CUDA_VISIBLE_DEVICES=8 python main.py \
   --z_list_m=0.0 \
   --channel=1 \
   --num_frames=8 \
-  --num_iters=5000 \
+  --num_iters=10000 \
   --lr=0.6 \
   --save_images \
   --save_complex=true \
@@ -96,7 +96,7 @@ CUDA_VISIBLE_DEVICES=9 python main.py \
   --z_list_m=0.0 \
   --channel=2 \
   --num_frames=8 \
-  --num_iters=5000 \
+  --num_iters=10000 \
   --lr=0.6 \
   --save_images \
   --save_complex=true \
