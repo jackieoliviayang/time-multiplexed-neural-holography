@@ -55,6 +55,11 @@ from pathlib import Path
     
 os.environ["KMP_DUPLICATE_LIB_OK"]="TRUE"
 
+def _sanitize_tag(s: str) -> str:
+    # filesystem-safe-ish
+    return "".join(c if (c.isalnum() or c in "-_.") else "_" for c in str(s)).strip("_")
+
+
 ## ADDED FOR SAVING
 def save_stack_video(stack, path, fps=12):
     """stack: torch or np, shape [D,H,W] or [1,D,H,W]"""
@@ -256,25 +261,26 @@ def _is_lightfield_target(arr: np.ndarray) -> bool:
     return arr.ndim >= 5
 
 
-
 def main():
-    # Command line argument processing / Parameters
     torch.set_default_dtype(torch.float32)
-    p = configargparse.ArgumentParser()
-    p.add('-c', '--config_filepath', required=False,
-          is_config_file=True, help='Path to config file.')
-    params.add_parameters(p, 'eval')
-    args = p.parse_args()
+
+    # ----- parser -----
+    parser = configargparse.ArgumentParser()
+    parser.add('-c', '--config_filepath', required=False,
+               is_config_file=True, help='Path to config file.')
+    params.add_parameters(parser, 'eval')
+
+    # ----- parse + configs -----
+    args = parser.parse_args()
     opt = params.set_configs(args)
     params.add_lf_params(opt)
 
+    # ----- channel -> color -----
     CHANNEL_TO_COLOR = {0: "red", 1: "green", 2: "blue"}
-    if opt.channel is None:
+    if getattr(opt, "channel", None) is None:
         raise ValueError("For complex_input per-color runs, you must pass --channel 0/1/2.")
     color = CHANNEL_TO_COLOR[int(opt.channel)]
-
     print(f"[color] channel={opt.channel} -> color={color}")
-
 
     print("[LF params at runtime] n_fft =", opt.n_fft,
       "hop_len =", opt.hop_len,
@@ -315,7 +321,10 @@ def main():
 
     # >>> NEW: ensure a shared cache and a local symlink in opt.out_dir
     # cache_path = ensure_shared_target_symlink(opt, D=len(opt.z_list))
-    cache_path = ensure_shared_target_symlink(opt, D=len(opt.z_list), color=color)
+    if getattr(opt, "target_cache_path", None):
+        cache_path = opt.target_cache_path
+    else:
+        cache_path = ensure_shared_target_symlink(opt, D=len(opt.z_list), color=color)
 
     # cache_path = (
     #     opt.target_cache_path
@@ -361,10 +370,51 @@ def main():
 
     # ### END TEST ###
 
+    # run_id = params.run_id(opt)
+    # # path to save out optimized phases
+    # out_path = os.path.join(opt.out_path, run_id)
+    # print(f'  - out_path: {out_path}')
+
     run_id = params.run_id(opt)
-    # path to save out optimized phases
-    out_path = os.path.join(opt.out_path, run_id)
-    print(f'  - out_path: {out_path}')
+    # ---------- derive a scene name ----------
+    scene = None
+
+    # 1) explicit scene fields if they exist
+    for key in ("scene_name", "scene", "data_name"):
+        if hasattr(opt, key) and getattr(opt, key):
+            scene = getattr(opt, key)
+            break
+
+    # 2) prefer opt.out_dir because your bash sets .../kitchen
+    if scene is None and hasattr(opt, "out_dir") and opt.out_dir:
+        scene = Path(opt.out_dir).name  # e.g., "kitchen"
+
+    # 3) fallback: infer from data_path
+    if scene is None and hasattr(opt, "data_path") and opt.data_path:
+        dp = opt.data_path
+        if isinstance(dp, (list, tuple)):
+            dp = dp[0]
+
+        dp_path = Path(dp)
+
+        if dp_path.suffix:  # .../kitchen.png
+            scene = dp_path.stem
+        elif dp_path.name in ("color_red", "color_green", "color_blue"):
+            scene = dp_path.parent.name
+        elif dp_path.name == "2d":
+            scene = dp_path.parent.name
+        else:
+            scene = dp_path.name
+
+    if scene is None:
+        scene = "scene0"
+
+    scene_tag = _sanitize_tag(scene)
+
+    # ---------- use a scene subdir ----------
+    out_path = os.path.join(opt.out_path, run_id, scene_tag)
+    print(f"  - out_path: {out_path}")
+
 
     # Tensorboard
     summaries_dir = os.path.join(out_path, 'summaries')
@@ -372,7 +422,7 @@ def main():
     writer = SummaryWriter(summaries_dir)
 
     # Write opt to experiment folder
-    utils.write_opt(vars(p.parse_args()), out_path)
+    utils.write_opt(vars(args), out_path)
 
     # Propagations
     camera_prop = None

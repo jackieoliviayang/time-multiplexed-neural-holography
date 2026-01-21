@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-mkdir -p outputs_lfopt_shared
-mkdir -p outputs_lfopt_shared/previews
+mkdir -p outputs_lfopt_shared/kitchen
+mkdir -p outputs_lfopt_shared/kitchen/previews
 mkdir -p logs
 
 MI_T=24
@@ -20,8 +20,9 @@ MI_T=24
 #   --hop_len 1 \
 #   --win_len 7 \
 #   --time_joint \
-#   --out_dir outputs_lfopt_shared \
-#   --preview_dir outputs_lfopt_shared/previews/red
+#   --out_dir outputs_lfopt_shared/kitchen \
+#   --dataset mipnerf --scene kitchen \
+#   --preview_dir outputs_lfopt_shared/kitchen/previews/red
 
 # python gen_target_lf.py \
 #   --mi_T ${MI_T} \
@@ -32,8 +33,9 @@ MI_T=24
 #   --hop_len 1 \
 #   --win_len 7 \
 #   --time_joint \
-#   --out_dir outputs_lfopt_shared \
-#   --preview_dir outputs_lfopt_shared/previews/green
+#   --out_dir outputs_lfopt_shared/kitchen \
+#   --dataset mipnerf --scene kitchen \
+#   --preview_dir outputs_lfopt_shared/kitchen/previews/green
 
 # python gen_target_lf.py \
 #   --mi_T ${MI_T} \
@@ -44,14 +46,15 @@ MI_T=24
 #   --hop_len 1 \
 #   --win_len 7 \
 #   --time_joint \
-#   --out_dir outputs_lfopt_shared \
-#   --preview_dir outputs_lfopt_shared/previews/blue
+#   --out_dir outputs_lfopt_shared/kitchen \
+#   --dataset mipnerf --scene kitchen \
+#   --preview_dir outputs_lfopt_shared/kitchen/previews/blue
 
 # ---------------------------------
 # 2) Run LF optimization (3 GPUs)
 # ---------------------------------
 
-CUDA_VISIBLE_DEVICES=7 python main.py \
+CUDA_VISIBLE_DEVICES=3 python main.py \
   --complex_input=true \
   --optimize_complex \
   --target=lf \
@@ -65,11 +68,11 @@ CUDA_VISIBLE_DEVICES=7 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/target_ampLF_red_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_red \
+  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_red_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_red/kitchen \
   > logs/lfopt_red.log 2>&1 &
 
-CUDA_VISIBLE_DEVICES=8 python main.py \
+CUDA_VISIBLE_DEVICES=4 python main.py \
   --complex_input=true \
   --optimize_complex \
   --target=lf \
@@ -83,11 +86,11 @@ CUDA_VISIBLE_DEVICES=8 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/target_ampLF_green_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_green \
+  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_green_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_green/kitchen \
   > logs/lfopt_green.log 2>&1 &
 
-CUDA_VISIBLE_DEVICES=9 python main.py \
+CUDA_VISIBLE_DEVICES=5 python main.py \
   --complex_input=true \
   --optimize_complex \
   --target=lf \
@@ -101,8 +104,8 @@ CUDA_VISIBLE_DEVICES=9 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/target_ampLF_blue_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_blue \
+  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_blue_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_blue/kitchen \
   > logs/lfopt_blue.log 2>&1 &
 
 wait
