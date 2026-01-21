@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-mkdir -p outputs_lfopt_shared/kitchen
-mkdir -p outputs_lfopt_shared/kitchen/previews
+mkdir -p outputs_lfopt_shared/bicycle
+mkdir -p outputs_lfopt_shared/bicycle/previews
 mkdir -p logs
 
 MI_T=24
@@ -11,44 +11,44 @@ MI_T=24
 # 1) Build LF targets (CPU)
 # -------------------------
 
-# python gen_target_lf.py \
-#   --mi_T ${MI_T} \
-#   --color red \
-#   --wavelength 6.38e-7 \
-#   --asm_dx 8e-6 --asm_dy 8e-6 \
-#   --n_fft 7 \
-#   --hop_len 1 \
-#   --win_len 7 \
-#   --time_joint \
-#   --out_dir outputs_lfopt_shared/kitchen \
-#   --dataset mipnerf --scene kitchen \
-#   --preview_dir outputs_lfopt_shared/kitchen/previews/red
+python gen_target_lf.py \
+  --mi_T ${MI_T} \
+  --color red \
+  --wavelength 6.38e-7 \
+  --asm_dx 8e-6 --asm_dy 8e-6 \
+  --n_fft 7 \
+  --hop_len 1 \
+  --win_len 7 \
+  --time_joint \
+  --out_dir outputs_lfopt_shared/bicycle \
+  --dataset mipnerf --scene bicycle \
+  --preview_dir outputs_lfopt_shared/bicycle/previews/red
 
-# python gen_target_lf.py \
-#   --mi_T ${MI_T} \
-#   --color green \
-#   --wavelength 5.20e-7 \
-#   --asm_dx 8e-6 --asm_dy 8e-6 \
-#   --n_fft 7 \
-#   --hop_len 1 \
-#   --win_len 7 \
-#   --time_joint \
-#   --out_dir outputs_lfopt_shared/kitchen \
-#   --dataset mipnerf --scene kitchen \
-#   --preview_dir outputs_lfopt_shared/kitchen/previews/green
+python gen_target_lf.py \
+  --mi_T ${MI_T} \
+  --color green \
+  --wavelength 5.20e-7 \
+  --asm_dx 8e-6 --asm_dy 8e-6 \
+  --n_fft 7 \
+  --hop_len 1 \
+  --win_len 7 \
+  --time_joint \
+  --out_dir outputs_lfopt_shared/bicycle \
+  --dataset mipnerf --scene bicycle \
+  --preview_dir outputs_lfopt_shared/bicycle/previews/green
 
-# python gen_target_lf.py \
-#   --mi_T ${MI_T} \
-#   --color blue \
-#   --wavelength 4.88e-7 \
-#   --asm_dx 8e-6 --asm_dy 8e-6 \
-#   --n_fft 7 \
-#   --hop_len 1 \
-#   --win_len 7 \
-#   --time_joint \
-#   --out_dir outputs_lfopt_shared/kitchen \
-#   --dataset mipnerf --scene kitchen \
-#   --preview_dir outputs_lfopt_shared/kitchen/previews/blue
+python gen_target_lf.py \
+  --mi_T ${MI_T} \
+  --color blue \
+  --wavelength 4.88e-7 \
+  --asm_dx 8e-6 --asm_dy 8e-6 \
+  --n_fft 7 \
+  --hop_len 1 \
+  --win_len 7 \
+  --time_joint \
+  --out_dir outputs_lfopt_shared/bicycle \
+  --dataset mipnerf --scene bicycle \
+  --preview_dir outputs_lfopt_shared/bicycle/previews/blue
 
 # ---------------------------------
 # 2) Run LF optimization (3 GPUs)
@@ -68,8 +68,8 @@ CUDA_VISIBLE_DEVICES=3 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_red_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_red/kitchen \
+  --target_cache_path outputs_lfopt_shared/bicycle/target_ampLF_red_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_red/bicycle \
   > logs/lfopt_red.log 2>&1 &
 
 CUDA_VISIBLE_DEVICES=4 python main.py \
@@ -86,8 +86,8 @@ CUDA_VISIBLE_DEVICES=4 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_green_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_green/kitchen \
+  --target_cache_path outputs_lfopt_shared/bicycle/target_ampLF_green_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_green/bicycle \
   > logs/lfopt_green.log 2>&1 &
 
 CUDA_VISIBLE_DEVICES=5 python main.py \
@@ -104,8 +104,8 @@ CUDA_VISIBLE_DEVICES=5 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_blue_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_blue/kitchen \
+  --target_cache_path outputs_lfopt_shared/bicycle/target_ampLF_blue_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_blue/bicycle \
   > logs/lfopt_blue.log 2>&1 &
 
 wait
