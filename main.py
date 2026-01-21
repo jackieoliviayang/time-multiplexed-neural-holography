@@ -43,7 +43,7 @@ from complex_dataset import (
     ComplexFieldFocalStack,
     save_complex_stack,
     ComplexFramesToFocalStackTarget,
-    _import_loader_from_mutual_intensity,   # <-- add this
+    # _import_loader_from_mutual_intensity,   # <-- add this
 )
 
 
@@ -397,25 +397,53 @@ def main():
     algorithm = algs.load_alg(opt.method, mem_eff=opt.mem_eff)
 
     # Loader
+    # if opt.complex_input:
+    #     ds = ComplexFramesToFocalStackTarget(
+    #         T_ref=opt.mi_T,
+    #         z_list=opt.z_list,
+    #         wavelength=opt.wavelength,
+    #         dx=opt.asm_dx, dy=opt.asm_dy,
+    #         device="cpu",
+    #         cache_path=cache_path,
+    #         preview_dir=getattr(opt, "mi_dbg_dir", None),
+    #         color=color,   # <-- NEW
+    #     )
+    #     img_loader = DataLoader(ds, batch_size=1, shuffle=False)
+    # else:
+    #     if ',' in opt.data_path:
+    #         opt.data_path = opt.data_path.split(',')
+    #     img_loader = loaders.TargetLoader(shuffle=opt.random_gen,
+    #                                     vertical_flips=opt.random_gen,
+    #                                     horizontal_flips=opt.random_gen,
+    #                                     scale_vd_range=False, **opt)
+
+    # Loader
     if opt.complex_input:
-        ds = ComplexFramesToFocalStackTarget(
-            T_ref=opt.mi_T,
-            z_list=opt.z_list,
-            wavelength=opt.wavelength,
-            dx=opt.asm_dx, dy=opt.asm_dy,
-            device="cpu",
-            cache_path=cache_path,
-            preview_dir=getattr(opt, "mi_dbg_dir", None),
-            color=color,   # <-- NEW
-        )
-        img_loader = DataLoader(ds, batch_size=1, shuffle=False)
+        # Backwards compatible: use cached target tensor (same as before), but don't
+        # instantiate the dataset (avoids needing data_root / mi_dbg_dir).
+        if not os.path.isfile(cache_path):
+            raise FileNotFoundError(
+                f"[target-cache] Missing cache at {cache_path}\n"
+                f"Hint: run gen_target_fs.py (or gen_target_lf.py) first."
+            )
+
+        target_amp_cpu = torch.load(cache_path, map_location="cpu")  # [D,H,W] or LF shape
+
+        class _OneTarget(torch.utils.data.Dataset):
+            def __len__(self): return 1
+            def __getitem__(self, idx): return {"target": target_amp_cpu}
+
+        img_loader = DataLoader(_OneTarget(), batch_size=1, shuffle=False)
     else:
         if ',' in opt.data_path:
             opt.data_path = opt.data_path.split(',')
-        img_loader = loaders.TargetLoader(shuffle=opt.random_gen,
-                                        vertical_flips=opt.random_gen,
-                                        horizontal_flips=opt.random_gen,
-                                        scale_vd_range=False, **opt)
+        img_loader = loaders.TargetLoader(
+            shuffle=opt.random_gen,
+            vertical_flips=opt.random_gen,
+            horizontal_flips=opt.random_gen,
+            scale_vd_range=False, **opt
+        )
+
 
     for i, batch in enumerate(img_loader):
         if opt.complex_input:
