@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-mkdir -p outputs_lfopt_shared/kitchen
-mkdir -p outputs_lfopt_shared/kitchen/previews
+mkdir -p outputs_lfopt_shared/hotdog
+mkdir -p outputs_lfopt_shared/hotdog/previews
 mkdir -p logs
 
 MI_T=24
@@ -16,45 +16,45 @@ python gen_target_lf.py \
   --color red \
   --wavelength 6.38e-7 \
   --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
+  --n_fft 3 \
   --hop_len 1 \
-  --win_len 7 \
+  --win_len 3 \
   --time_joint \
-  --out_dir outputs_lfopt_shared/kitchen \
-  --dataset mipnerf --scene kitchen \
-  --preview_dir outputs_lfopt_shared/kitchen/previews/red
+  --out_dir outputs_lfopt_shared/hotdog \
+  --dataset blender --scene hotdog \
+  --preview_dir outputs_lfopt_shared/hotdog/previews/red
 
 python gen_target_lf.py \
   --mi_T ${MI_T} \
   --color green \
   --wavelength 5.20e-7 \
   --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
+  --n_fft 3 \
   --hop_len 1 \
-  --win_len 7 \
+  --win_len 3 \
   --time_joint \
-  --out_dir outputs_lfopt_shared/kitchen \
-  --dataset mipnerf --scene kitchen \
-  --preview_dir outputs_lfopt_shared/kitchen/previews/green
+  --out_dir outputs_lfopt_shared/hotdog \
+  --dataset blender --scene hotdog \
+  --preview_dir outputs_lfopt_shared/hotdog/previews/green
 
 python gen_target_lf.py \
   --mi_T ${MI_T} \
   --color blue \
   --wavelength 4.88e-7 \
   --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
+  --n_fft 3 \
   --hop_len 1 \
-  --win_len 7 \
+  --win_len 3 \
   --time_joint \
-  --out_dir outputs_lfopt_shared/kitchen \
-  --dataset mipnerf --scene kitchen \
-  --preview_dir outputs_lfopt_shared/kitchen/previews/blue
+  --out_dir outputs_lfopt_shared/hotdog \
+  --dataset blender --scene hotdog \
+  --preview_dir outputs_lfopt_shared/hotdog/previews/blue
 
 # ---------------------------------
 # 2) Run LF optimization (3 GPUs)
 # ---------------------------------
 
-CUDA_VISIBLE_DEVICES=3 python main.py \
+CUDA_VISIBLE_DEVICES=6 python main.py \
   --complex_input=true \
   --optimize_complex \
   --target=lf \
@@ -68,11 +68,11 @@ CUDA_VISIBLE_DEVICES=3 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_red_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_red/kitchen \
+  --target_cache_path outputs_lfopt_shared/hotdog/target_ampLF_red_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_red/hotdog \
   > logs/lfopt_red.log 2>&1 &
 
-CUDA_VISIBLE_DEVICES=4 python main.py \
+CUDA_VISIBLE_DEVICES=7 python main.py \
   --complex_input=true \
   --optimize_complex \
   --target=lf \
@@ -86,11 +86,11 @@ CUDA_VISIBLE_DEVICES=4 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_green_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_green/kitchen \
+  --target_cache_path outputs_lfopt_shared/hotdog/target_ampLF_green_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_green/hotdog \
   > logs/lfopt_green.log 2>&1 &
 
-CUDA_VISIBLE_DEVICES=5 python main.py \
+CUDA_VISIBLE_DEVICES=8 python main.py \
   --complex_input=true \
   --optimize_complex \
   --target=lf \
@@ -104,8 +104,8 @@ CUDA_VISIBLE_DEVICES=5 python main.py \
   --save_images \
   --save_complex=true \
   --mi_T=${MI_T} \
-  --target_cache_path outputs_lfopt_shared/kitchen/target_ampLF_blue_Tref${MI_T}.pt \
-  --out_dir outputs_lfopt_24_blue/kitchen \
+  --target_cache_path outputs_lfopt_shared/hotdog/target_ampLF_blue_Tref${MI_T}.pt \
+  --out_dir outputs_lfopt_24_blue/hotdog \
   > logs/lfopt_blue.log 2>&1 &
 
 wait

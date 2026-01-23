@@ -16,9 +16,9 @@ python gen_target_lf.py \
   --color red \
   --wavelength 6.38e-7 \
   --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
+  --n_fft 3 \
   --hop_len 1 \
-  --win_len 7 \
+  --win_len 3 \
   --time_joint \
   --out_dir outputs_lfopt_shared/kitchen \
   --dataset mipnerf --scene kitchen \
@@ -29,9 +29,9 @@ python gen_target_lf.py \
   --color green \
   --wavelength 5.20e-7 \
   --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
+  --n_fft 3 \
   --hop_len 1 \
-  --win_len 7 \
+  --win_len 3 \
   --time_joint \
   --out_dir outputs_lfopt_shared/kitchen \
   --dataset mipnerf --scene kitchen \
@@ -42,9 +42,9 @@ python gen_target_lf.py \
   --color blue \
   --wavelength 4.88e-7 \
   --asm_dx 8e-6 --asm_dy 8e-6 \
-  --n_fft 7 \
+  --n_fft 3 \
   --hop_len 1 \
-  --win_len 7 \
+  --win_len 3 \
   --time_joint \
   --out_dir outputs_lfopt_shared/kitchen \
   --dataset mipnerf --scene kitchen \
