@@ -275,6 +275,46 @@ def main():
     opt = params.set_configs(args)
     params.add_lf_params(opt)
 
+    print("[CLI args] n_fft =", getattr(args, "n_fft", None),
+        "hop_len =", getattr(args, "hop_len", None),
+        "win_len =", getattr(args, "win_len", None))
+
+
+    # # >>> FORCE LF params from CLI if provided (params.add_lf_params may override)
+    # if hasattr(args, "n_fft") and args.n_fft is not None:
+    #     n = int(args.n_fft)
+    #     opt.n_fft = (n, n) if not isinstance(opt.n_fft, (list, tuple)) else (n, n)
+    # if hasattr(args, "win_len") and args.win_len is not None:
+    #     w = int(args.win_len)
+    #     opt.win_len = (w, w)
+    # if hasattr(args, "hop_len") and args.hop_len is not None:
+    #     h = int(args.hop_len)
+    #     opt.hop_len = (h, h)
+
+    # >>> Only override LF params if the user explicitly provided them on the CLI
+    argv = os.sys.argv
+
+    def _cli_provided(flag: str) -> bool:
+        return any(a == flag or a.startswith(flag + "=") for a in argv)
+
+    if _cli_provided("--n_fft"):
+        n = int(args.n_fft)
+        opt.n_fft = (n, n)
+
+    if _cli_provided("--win_len"):
+        w = int(args.win_len)
+        opt.win_len = (w, w)
+
+    if _cli_provided("--hop_len"):
+        h = int(args.hop_len)
+        opt.hop_len = (h, h)
+
+
+    print("[LF params at runtime] n_fft =", opt.n_fft,
+          "hop_len =", opt.hop_len,
+          "win_len =", opt.win_len)
+
+
     # ----- channel -> color -----
     CHANNEL_TO_COLOR = {0: "red", 1: "green", 2: "blue"}
     if getattr(opt, "channel", None) is None:
@@ -558,17 +598,6 @@ def main():
                             forward_prop=sim_prop, camera_prop=camera_prop,
                             writer=writer, quantization=quantization,
                             out_path_idx=out_path_idx, **opt)
-
-        # ## TEST ###
-        # results = algorithm(
-        #     init_phase, target_amp, target_mask, target_idx,
-        #     forward_prop=sim_prop, camera_prop=camera_prop,
-        #     writer=writer, quantization=quantization,
-        #     out_path_idx=out_path_idx,
-        #     gws_init=gt_init,                # <-- NEW
-        #     **opt
-        # )
-        # ## TEST ###
                             
         # optimized slm phase
         final_phase = results['final_phase']

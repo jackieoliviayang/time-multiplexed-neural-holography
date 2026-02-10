@@ -230,14 +230,16 @@ def main():
 
     print(f"  target_amp shape (saved) = {tuple(target_amp.shape)}, dtype={target_amp.dtype}")
 
+    mask = torch.ones_like(target_amp)
+
     # 7) Optional preview
     if args.preview_dir is not None:
-        maybe_preview_lf_amp(target_amp, args.preview_dir)
+        maybe_preview_lf_amp(mask, args.preview_dir)
 
     # 8) Save
-    torch.save(target_amp.detach().cpu(), cache_path)
-    print(f"[gen_target_lf] Saved: {cache_path}")
-
+    mask = torch.ones_like(target_amp)
+    torch.save(mask.detach().cpu(), cache_path) # modified
+    print(f"[mask] Saved: {cache_path}")
 
 if __name__ == "__main__":
     main()

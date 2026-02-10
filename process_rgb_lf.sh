@@ -1,5 +1,5 @@
 python process_rgb_lf.py \
-  --red_dir   results/_SGD_red_ASM_10000_recon_1.0_None_0.0_random_tm_8/bicycle \
-  --green_dir results/_SGD_green_ASM_10000_recon_1.0_None_0.0_random_tm_8/bicycle \
-  --blue_dir  results/_SGD_blue_ASM_10000_recon_1.0_None_0.0_random_tm_8/bicycle \
-  --out_dir outputs_lfopt_24_rgb/bicycle
+  --red_dir   results/_SGD_red_ASM_10000_recon_1.0_None_0.0_random_tm_8/hotdog \
+  --green_dir results/_SGD_green_ASM_10000_recon_1.0_None_0.0_random_tm_8/hotdog \
+  --blue_dir  results/_SGD_blue_ASM_10000_recon_1.0_None_0.0_random_tm_8/hotdog \
+  --out_dir outputs_lfopt_24_rgb/hotdog_sparse
