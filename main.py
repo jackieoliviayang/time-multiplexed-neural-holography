@@ -336,15 +336,33 @@ def main():
             opt.wavelengths = list(opt.wavelengths)
             opt.wavelengths[opt.channel] = user_wl
 
-    # ---- Use 1024×1024 everywhere  ----
+    # # ---- Use 1024×1024 everywhere  ----
+    # if opt.complex_input:
+    #     opt.citl = False
+    #     opt.slm_type = 'holoeye'
+    #     opt.use_lut = False
+    #     opt.slm_res   = (1024, 1024)
+    #     opt.image_res = opt.slm_res
+    #     opt.roi_res   = opt.slm_res
+    #     opt.full_roi  = True
+
     if opt.complex_input:
         opt.citl = False
         opt.slm_type = 'holoeye'
         opt.use_lut = False
-        opt.slm_res   = (1024, 1024)
+
+        if getattr(opt, "target_cache_path", None):
+            tmp = torch.load(opt.target_cache_path, map_location="cpu")
+            while tmp.ndim > 2:
+                tmp = tmp[0]
+            H, W = tmp.shape[-2], tmp.shape[-1]
+            opt.slm_res = (H, W)
+        else:
+            opt.slm_res = (1024, 1024)
+
         opt.image_res = opt.slm_res
-        opt.roi_res   = opt.slm_res
-        opt.full_roi  = True
+        opt.roi_res = opt.slm_res
+        opt.full_roi = True
 
     # ---- Make the forward model use ALL depths from --z_list_m ----
     # Target has D=len(opt.z_list); make sim model match it.
