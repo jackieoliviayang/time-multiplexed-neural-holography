@@ -50,6 +50,13 @@ from complex_dataset import (
 import shutil, sys
 from pathlib import Path
 
+import torch, time
+
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    torch.cuda.synchronize()
+
 #import wx
 #wx.DisableAsserts()
     
@@ -822,6 +829,12 @@ def main():
 
     if camera_prop is not None:
         camera_prop.disconnect()
+
+
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        print(f"peak_allocated_mb={torch.cuda.max_memory_allocated() / 1024**2:.3f}")
+        print(f"peak_reserved_mb={torch.cuda.max_memory_reserved() / 1024**2:.3f}")
 
 if __name__ == "__main__":
     main()
